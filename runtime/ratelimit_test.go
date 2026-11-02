@@ -58,13 +58,15 @@ func TestPartnerRateLimitIsPerOrg(t *testing.T) {
 		t.Fatalf("third call of org_a: %d %s", res.status, res.raw)
 	}
 	// org_b は org_a の上限に影響されない。
-	if get("org-b") != 200 || get("org-b") != 200 {
-		t.Fatal("org_b must not be limited by org_a")
+	for i := range 2 {
+		if got := get("org-b"); got != 200 {
+			t.Fatalf("org_b call %d: %d; must not be limited by org_a", i+1, got)
+		}
 	}
 	// 30秒で1回分戻る（2/min）。
 	c.t = c.t.Add(30 * time.Second)
-	if get("org-a-1") != 200 || get("org-a-1") != 429 {
-		t.Fatal("org_a must get one call back after 30s")
+	if first, second := get("org-a-1"), get("org-a-1"); first != 200 || second != 429 {
+		t.Fatalf("org_a after 30s: %d, %d; want 200, 429", first, second)
 	}
 }
 
