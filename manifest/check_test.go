@@ -75,6 +75,15 @@ func TestCheckReportsEveryRule(t *testing.T) {
 			o.Expose[0].Protocols = []string{"grpc"}
 			o.Output = manifest.Schema{Type: "object", Fields: []manifest.Field{{Name: "my-field", Schema: str()}}}
 		})}, manifest.Error, "not a valid protobuf name"},
+		{"bad rate", []manifest.Operation{op("a.get", "query", func(o *manifest.Operation) {
+			o.RateLimits = []manifest.RateLimit{{Audience: "public", Limit: "10/day"}}
+		})}, manifest.Error, "unit must be"},
+		{"rate unknown audience", []manifest.Operation{op("a.get", "query", func(o *manifest.Operation) {
+			o.RateLimits = []manifest.RateLimit{{Audience: "galaxy", Limit: "1/s"}}
+		})}, manifest.Error, "rate limit for unknown audience"},
+		{"rate not exposed", []manifest.Operation{op("a.get", "query", func(o *manifest.Operation) {
+			o.RateLimits = []manifest.RateLimit{{Audience: "partner", Limit: "1/s"}}
+		})}, manifest.Warning, "not exposed"},
 		{"bad name", []manifest.Operation{op("A.Get", "query", nil)}, manifest.Error, "invalid operation name"},
 		{"unknown audience", []manifest.Operation{op("a.get", "query", func(o *manifest.Operation) {
 			o.Expose[0].Audience = "galaxy"

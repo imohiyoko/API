@@ -148,6 +148,21 @@ func Check(m *Manifest) []Diagnostic {
 				}
 			}
 		}
+		seenRate := map[string]bool{}
+		for _, r := range op.RateLimits {
+			switch {
+			case !seenAud[r.Audience]:
+				add(Error, n, "rate limit for unknown audience %q", r.Audience)
+			case seenRate[r.Audience]:
+				add(Error, n, "duplicate rate limit for %s", r.Audience)
+			case !exposedTo[r.Audience]:
+				add(Warning, n, "rate limit for %s, where the operation is not exposed", r.Audience)
+			}
+			seenRate[r.Audience] = true
+			if _, err := ParseRate(r.Limit); err != nil {
+				add(Error, n, "%v", err)
+			}
+		}
 		if len(exposedTo) > 0 {
 			checkMin(m, n, op.Input, exposedTo, add)
 			checkMin(m, n, op.Output, exposedTo, add)

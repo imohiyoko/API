@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 )
 
 // 主体の種類。iam の principal_type と同じ。
@@ -66,4 +67,16 @@ type Decision struct {
 // Authorizer は認可を判定する。
 type Authorizer interface {
 	Check(ctx context.Context, req CheckRequest) (Decision, error)
+}
+
+// RateLimiter はレートリミットを数える。既定は runtime のプロセス内の実装。複数のプロセスで数えるなら、共有の保存先の実装を渡す。
+type RateLimiter interface {
+	// Allow は key の呼び出しを1回数え、許すか、許さないならもう一度呼べるまでの時間を返す。
+	Allow(ctx context.Context, key string, limit Rate) (allowed bool, retryAfter time.Duration, err error)
+}
+
+// Rate は期間あたりの回数。
+type Rate struct {
+	Requests int
+	Per      time.Duration
 }

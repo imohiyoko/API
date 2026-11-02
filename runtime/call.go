@@ -22,7 +22,8 @@ type opCall struct {
 }
 
 // run は呼び出しを行い、公開範囲に見えるフィールドだけの出力（define.Encode の結果）を返す。
-func (c *opCall) run(ctx context.Context, token string, hasToken bool, src define.InputSource) (any, error) {
+// client は接続元のアドレス（匿名の呼び出しのレートリミットに使う）。
+func (c *opCall) run(ctx context.Context, token string, hasToken bool, client string, src define.InputSource) (any, error) {
 	ctx = define.WithAudience(ctx, c.aud)
 
 	// 認証。Anonymous でも、トークンが付いていれば確かめる。
@@ -43,6 +44,18 @@ func (c *opCall) run(ctx context.Context, token string, hasToken bool, src defin
 		ctx = define.WithPrincipal(ctx, p)
 	} else if !c.spec.Anonymous {
 		return nil, &define.Error{Code: define.CodeUnauthenticated}
+	}
+
+	// レートリミット（design.md 4.4）。認可の前に数え、超えた呼び出しで iam を呼ばない。
+	if rate, ok := c.spec.RateFor(c.aud); ok {
+		key := c.aud + "|" + c.spec.Name + "|" + rateKey(c.ac, principal, client)
+		allowed, retry, err := c.cfg.RateLimiter.Allow(ctx, key, port.Rate{Requests: rate.Requests, Per: rate.Per})
+		if err != nil {
+			return nil, c.unavailable("rate limit", err)
+		}
+		if !allowed {
+			return nil, &define.Error{Code: define.CodeResourceExhausted, Reasons: []string{"rate_limited"}, RetryAfter: retry}
+		}
 	}
 
 	in, err := c.op.Decode(src)
@@ -96,4 +109,16 @@ func (c *opCall) disclose(e *define.Error) (message string, reasons []string) {
 		message = e.Message
 	}
 	return message, reasons
+}
+
+// rateKey は数える単位。Org を求める公開範囲（partner）は Org ごと、それ以外は主体ごと、匿名なら接続元ごと。
+// Org ごとに数えるので、ある提携先が上限に達しても、ほかの提携先は影響を受けない。
+func rateKey(ac AudienceConfig, p *port.Principal, client string) string {
+	switch {
+	case p == nil:
+		return "addr:" + client
+	case ac.RequireOrg && p.OrgID != "":
+		return "org:" + p.OrgID
+	}
+	return p.Type + ":" + p.ID
 }

@@ -167,6 +167,17 @@ API に出すフィールドには `api` タグを付ける。タグの無いフ
 
 `Authz` も `Anonymous` も無い操作を public 以外に出すと、その口で受ける主体なら誰でも呼べる。public の検査は、公開範囲の並びの最も狭いものに対して行う。
 
+レートリミットの誤り（知らない公開範囲、同じ公開範囲に2つ、読めない上限）はエラー、操作を出していない公開範囲へのレートリミットは警告。
+
+### 4.4 レートリミット
+
+- 操作ごと・公開範囲ごとに `define.RateLimit(define.Partner, "600/min")` で決める（マニフェストの `rate_limits`）。単位は `s`・`min`・`h`。書かない公開範囲では数えない
+- 呼び出し元ごとに数える。Org を求める公開範囲（partner）は Org ごと、それ以外は主体ごと、匿名の呼び出しは接続元のアドレスごと。Org ごとなので、ある提携先が上限に達しても、ほかの提携先は影響を受けない。同じ Org のサービスアカウントは上限を分け合う
+- REST と gRPC は同じ上限を分け合う（数える単位は公開範囲・操作・呼び出し元）
+- 認証と主体の確認のあと、入力の検証と認可の前に数える。超えた呼び出しで iam を呼ばない
+- 超えたら `resource_exhausted`（REST は 429 と `Retry-After`、gRPC は `RESOURCE_EXHAUSTED` と `google.rpc.RetryInfo`）。拒否の理由は `rate_limited`
+- 既定はプロセス内のトークンバケット（続けて上限の回数まで呼べ、期間に応じて戻る）。複数のプロセスで動かすときは、共有の保存先を使う `port.RateLimiter` の実装を `Config.RateLimiter` に渡す
+
 ## 5. プロトコル
 
 ### 5.1 操作の種類との対応
@@ -207,7 +218,7 @@ API に出すフィールドには `api` タグを付ける。タグの無いフ
 - フィールドの番号は、定義の中のフィールドの順番（1から）。公開範囲で見えないフィールドを除いても番号は変わらないので、公開範囲ごとの `.proto` の間でも同じ番号になる。フィールドの順番を変える・途中に足すと互換性が壊れる（足すときは最後に足す）
 - `json_name` はフィールド名と同じにする。grpcurl や JSON 変換でも REST と同じ名前になる
 - proto3 では、スカラーが「無い」ことと「ゼロ値」を区別できない。gRPC では、必須のスカラーはゼロ値として受ける（REST なら required のエラーになる入力も通る）。区別したいフィールドは省略できる（optional）ものにする
-- 認証は metadata の `authorization: Bearer <token>`。エラーの対応は invalid_argument → `INVALID_ARGUMENT`、unauthenticated → `UNAUTHENTICATED`、permission_denied → `PERMISSION_DENIED`、not_found → `NOT_FOUND`、conflict → `ALREADY_EXISTS`、failed_precondition → `FAILED_PRECONDITION`、unavailable → `UNAVAILABLE`、internal → `INTERNAL`。見せる中身は REST と同じ開示のルール（4.1）で、メッセージは status の message、コードは `google.rpc.ErrorInfo` の reason、拒否の理由は ErrorInfo の metadata `reasons`（カンマ区切り）に入れる
+- 認証は metadata の `authorization: Bearer <token>`。エラーの対応は invalid_argument → `INVALID_ARGUMENT`、unauthenticated → `UNAUTHENTICATED`、permission_denied → `PERMISSION_DENIED`、not_found → `NOT_FOUND`、conflict → `ALREADY_EXISTS`、failed_precondition → `FAILED_PRECONDITION`、resource_exhausted → `RESOURCE_EXHAUSTED`、unavailable → `UNAVAILABLE`、internal → `INTERNAL`。見せる中身は REST と同じ開示のルール（4.1）で、メッセージは status の message、コードは `google.rpc.ErrorInfo` の reason、拒否の理由は ErrorInfo の metadata `reasons`（カンマ区切り）に入れる
 - サーバーリフレクションは internal だけ既定で載せる（`AudienceConfig.GRPCReflection`）。載せると、契約を持たない呼び出し元にも操作と型が見えるため
 
 ## 6. 認証と認可（iam）

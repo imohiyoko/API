@@ -14,13 +14,16 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/reflection"
 	reflectionv1 "google.golang.org/grpc/reflection/grpc_reflection_v1"
 	reflectionv1alpha "google.golang.org/grpc/reflection/grpc_reflection_v1alpha"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/protoadapt"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/dynamicpb"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/imohiyoko/API/define"
@@ -120,7 +123,11 @@ func (g *grpcOp) serve(ctx context.Context, req *dynamicpb.Message) (res any, er
 	}
 	// 変換の誤りは Body() で返す。REST と同じく、認証と主体の確認のあとで invalid_argument になる。
 	src := newGRPCSource(req, g.spec, g.m, g.aud)
-	out, err := g.run(ctx, token, hasToken, src)
+	client := ""
+	if p, ok := peer.FromContext(ctx); ok && p.Addr != nil {
+		client = clientHost(p.Addr.String())
+	}
+	out, err := g.run(ctx, token, hasToken, client, src)
 	if err != nil {
 		return nil, g.status(err)
 	}
@@ -142,6 +149,7 @@ var grpcCodes = map[define.Code]codes.Code{
 	define.CodeNotFound:           codes.NotFound,
 	define.CodeConflict:           codes.AlreadyExists,
 	define.CodeFailedPrecondition: codes.FailedPrecondition,
+	define.CodeResourceExhausted:  codes.ResourceExhausted,
 	define.CodeUnavailable:        codes.Unavailable,
 	define.CodeInternal:           codes.Internal,
 }
@@ -162,7 +170,11 @@ func (g *grpcOp) status(err error) error {
 	if len(reasons) > 0 {
 		info.Metadata = map[string]string{"reasons": strings.Join(reasons, ",")}
 	}
-	st, derr := status.New(code, msg).WithDetails(info)
+	details := []protoadapt.MessageV1{info}
+	if e.RetryAfter > 0 {
+		details = append(details, &errdetails.RetryInfo{RetryDelay: durationpb.New(e.RetryAfter)})
+	}
+	st, derr := status.New(code, msg).WithDetails(details...)
 	if derr != nil {
 		return status.New(code, msg).Err()
 	}

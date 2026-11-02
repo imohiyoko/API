@@ -52,6 +52,8 @@ func Registry(s *Store) *define.Registry {
 		define.Expose(define.Internal, define.REST, define.GRPC),
 		define.Expose(define.Partner, define.REST),
 		define.Expose(define.Public, define.REST),
+		define.RateLimit(define.Partner, "600/min"),
+		define.RateLimit(define.Public, "60/min"),
 	).Handle(func(_ context.Context, in GetUserIn) (User, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -68,6 +70,7 @@ func Registry(s *Store) *define.Registry {
 		define.Authz("users:list"),
 		define.Expose(define.Internal, define.REST, define.GRPC),
 		define.Expose(define.Partner, define.REST),
+		define.RateLimit(define.Partner, "120/min"),
 	).Handle(func(_ context.Context, in ListUsersIn) ([]User, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
