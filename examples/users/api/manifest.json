@@ -1,0 +1,257 @@
+{
+  "version": "api.manifest/v0",
+  "operations": [
+    {
+      "name": "users.get",
+      "kind": "query",
+      "doc": "ユーザーを取得する",
+      "authz": {
+        "action": "users:read",
+        "resource_type": "user",
+        "resource_field": "id"
+      },
+      "expose": [
+        {
+          "audience": "internal",
+          "protocols": [
+            "rest",
+            "grpc"
+          ]
+        },
+        {
+          "audience": "partner",
+          "protocols": [
+            "rest"
+          ]
+        },
+        {
+          "audience": "public",
+          "protocols": [
+            "rest"
+          ]
+        }
+      ],
+      "input": {
+        "type": "object",
+        "fields": [
+          {
+            "name": "id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "output": {
+        "type": "object",
+        "fields": [
+          {
+            "name": "id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "email",
+            "min": "partner",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "note",
+            "min": "internal",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "users.list",
+      "kind": "query",
+      "doc": "ユーザーの一覧",
+      "authz": {
+        "action": "users:list"
+      },
+      "expose": [
+        {
+          "audience": "internal",
+          "protocols": [
+            "rest"
+          ]
+        },
+        {
+          "audience": "partner",
+          "protocols": [
+            "rest"
+          ]
+        }
+      ],
+      "input": {
+        "type": "object",
+        "fields": [
+          {
+            "name": "limit",
+            "in": "query",
+            "optional": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ]
+      },
+      "output": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "fields": [
+            {
+              "name": "id",
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "name",
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "email",
+              "min": "partner",
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "note",
+              "min": "internal",
+              "schema": {
+                "type": "string"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "users.create",
+      "kind": "command",
+      "doc": "ユーザーを作る",
+      "authz": {
+        "action": "users:create"
+      },
+      "expose": [
+        {
+          "audience": "internal",
+          "protocols": [
+            "rest"
+          ]
+        }
+      ],
+      "input": {
+        "type": "object",
+        "fields": [
+          {
+            "name": "name",
+            "in": "body",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "email",
+            "in": "body",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "note",
+            "in": "body",
+            "min": "internal",
+            "optional": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "output": {
+        "type": "object",
+        "fields": [
+          {
+            "name": "id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "email",
+            "min": "partner",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "note",
+            "min": "internal",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "users.delete",
+      "kind": "command",
+      "doc": "ユーザーを消す",
+      "authz": {
+        "action": "users:delete",
+        "resource_type": "user",
+        "resource_field": "id"
+      },
+      "expose": [
+        {
+          "audience": "internal",
+          "protocols": [
+            "rest"
+          ]
+        }
+      ],
+      "input": {
+        "type": "object",
+        "fields": [
+          {
+            "name": "id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "output": {
+        "type": "object"
+      }
+    }
+  ]
+}
