@@ -44,22 +44,25 @@ Go の定義 ──書き出し──▶ マニフェスト（JSON / YAML。言�
   - **サイドカー**：Go 以外のサービスの隣で動く。認証・認可・プロトコルの変換・フィールドの絞り込みをして、本体のハンドラーには単純な HTTP（JSON）で渡す
 - 必要になれば、ほかの言語の薄いライブラリをマニフェストの上に足す
 
-### 2.3 リポジトリ構成（予定）
+### 2.3 リポジトリ構成
 
 ```
 api/
-├── define/      # 定義の DSL（Go）
-├── manifest/    # マニフェストの型、読み書き、検証
-├── runtime/     # 共通の層（検証・認証・認可・制限・監査）と公開範囲ごとの組み立て
-├── protocol/    # rest/ grpc/ graphql/ websocket/ webhook/
-├── gen/         # 契約ファイルの生成（openapi/ proto/ sdl/ asyncapi/）
+├── define/      # 定義の DSL（Go）、入力の組み立てと出力の絞り込み
+├── manifest/    # マニフェストの型、読み書き、検査（4.3）、REST の規則（5.1）
+├── runtime/     # 共通の層（検証・認証・認可・エラーの開示）と公開範囲ごとの口。プロトコルは今は REST だけ
+├── gen/         # 契約ファイルの生成（openapi/。今後 proto/ sdl/ asyncapi/）
 ├── port/        # Authenticator・Authorizer など外部依存のポート
 ├── adapters/    # iam/ memory/
-├── cmd/api/     # CLI（gen・check・sidecar）
+├── cli/         # check・manifest・gen（利用者の main から cli.Main(registry, args) で呼ぶ）
+├── cmd/api/     # マニフェストのファイルを扱う CLI（今後 sidecar も）
+├── examples/    # 例（users）
+├── internal/archtest/  # モジュール境界の検査
 └── docs/
 ```
 
-- コア（`define`・`manifest`・`runtime`）は `adapters/` を import しない
+- コア（`define`・`manifest`・`runtime`・`port`・`gen`・`cli`）は `adapters/` を import しない（`internal/archtest` で検査）
+- Go 1.24 以上。M1 は標準ライブラリだけで動く
 - プロトコルとアダプタは、使うものだけをビルドに含められるよう別パッケージにする
 
 ## 3. 定義
@@ -93,8 +96,26 @@ type User struct {
 }
 ```
 
-- 定義はレジストリに集め、`runtime.Build(registry, config)` が公開範囲ごとの `http.Handler`・gRPC サーバーを返す
-- `api gen` がマニフェストと契約ファイルを書き出す。`api check` が不正な定義（4.3）を報告する
+- 定義はレジストリに集め、`runtime.Build(registry, config)` が公開範囲ごとの `http.Handler`（今後 gRPC サーバーも）を返す
+- 利用者の main から `cli.Main(registry, args)` を呼ぶと、`check`・`manifest`・`gen` が使える。`gen` は `manifest.json` と公開範囲ごとの `openapi/<公開範囲>.json` を書き出す。`cmd/api` は同じことをマニフェストのファイルから行う
+
+### 3.1 フィールドのタグ
+
+API に出すフィールドには `api` タグを付ける。タグの無いフィールドは出さない（4.2）。
+
+| タグ | 意味 |
+|---|---|
+| `api:"name"` | API 上の名前 |
+| `api:"id,path"` | 入力の場所（`path`・`query`・`body`）。既定は Query なら `query`、Command なら `body`。入力の一番上のフィールドでだけ効く |
+| `api:"email,min=partner"` | 見せる最も狭い公開範囲。それより狭い公開範囲では、出力から落とし、入力では無いものとして扱う |
+| `api:"note,optional"` | 省略できる。ポインターの型も省略できる |
+
+対応する型は、文字列・真偽値・整数・浮動小数点数・`time.Time`（RFC 3339）・`[]byte`・スライス・struct とそのポインター。map と再帰する型は定義のエラーにする。
+
+### 3.2 ハンドラーのエラーと文脈
+
+- ハンドラーは `define.Errorf(define.CodeNotFound, ...)` のように種類の付いたエラーを返す。種類の無いエラーは `internal` として扱い、中身は見せない
+- `define.PrincipalFrom(ctx)` で認証済みの主体、`define.AudienceFrom(ctx)` で要求を受けた公開範囲を取れる
 
 ## 4. 公開範囲
 
@@ -114,7 +135,9 @@ type User struct {
 | 契約ファイル・ドキュメント | 社内向けに生成 | 生成して提携先に渡す | 生成して公開する |
 
 - partner は、提携先を iam の Org として登録し、その Org のサービスアカウントで呼ぶ
-- 公開範囲ごとに別の契約ファイルを作る（`openapi/public.yaml` には public の操作とフィールドしか載らない）
+- 公開範囲ごとに別の契約ファイルを作る（`openapi/public.json` には public の操作とフィールドしか載らない）
+- 口ごとに受ける主体の種類を決める（`runtime.AudienceConfig`）。既定は internal・partner がサービスアカウントだけ（partner は Org に属するものだけ）、public がユーザーとサービスアカウント。受けない主体は 403（理由 `principal_not_allowed`）
+- 入力の誤り（`invalid_argument`）は、直し方が分かるように、どの公開範囲でもメッセージを見せる
 
 ### 4.2 既定は公開しない
 
@@ -129,6 +152,7 @@ type User struct {
 エラー：
 
 - 種類とプロトコルの組み合わせが 5.1 の表で「―」
+- 名前の形、公開範囲・プロトコルの名前、入力の場所の誤り（Query の body など）、`Authz` と `Anonymous` の併用、`Authz` のリソースのフィールドが入力に無い
 - public に出すのに `Authz` も `Anonymous` も無い
 - REST に出す Command の HTTP メソッドが決まらない（5.1）
 - 同じ公開範囲・プロトコルの中で、パス・メソッド名・フィールド名がぶつかる
@@ -136,6 +160,9 @@ type User struct {
 警告：
 
 - フィールドの `min` が、操作を出すどの公開範囲よりも狭い（どこにも見えないフィールドになる）
+- まだ実装していないプロトコルへの公開（その公開は無視する）
+
+`Authz` も `Anonymous` も無い操作を public 以外に出すと、その口で受ける主体なら誰でも呼べる。public の検査は、公開範囲の並びの最も狭いものに対して行う。
 
 ## 5. プロトコル
 
@@ -149,13 +176,14 @@ type User struct {
 | Event | ― | Subscription | server streaming | ― | メッセージ | POST（送信） |
 
 - SSE は独立したプロトコルではなく、REST の Stream の実装として扱う（M5 で足す）
+- REST のパスは `define.HTTP` で指定する。省略したときは名前の語を `/` でつなぎ（最後の語が get・list・create・replace・update・delete なら落とす）、path のフィールドを `/{name}` で足す。例：`users.get` → `GET /users/{id}`、`users.list` → `GET /users`
 - REST の Command の HTTP メソッドは、`define.HTTP` で指定する。省略したときは操作の名前の最後の語で決める：`create` → POST、`replace` → PUT、`update` → PATCH、`delete` → DELETE。どれにも当たらなければエラー（4.3）。冪等性は PUT・DELETE だけを冪等として契約に書く
 
 ### 5.2 実装と契約
 
 | プロトコル | 契約 | 実装 |
 |---|---|---|
-| REST | OpenAPI 3.1 | `net/http`（Go 1.22 以降のパターン） |
+| REST | OpenAPI 3.1（JSON） | `net/http`（Go 1.22 以降のパターン） |
 | gRPC | .proto | grpc-go。生成コードを使わず、マニフェストから動的にメッセージを組み立てる |
 | GraphQL | SDL | 未決（gqlgen か graphql-go） |
 | WebSocket | AsyncAPI | coder/websocket |
