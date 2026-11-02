@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
+	"time"
 )
 
 // Version はマニフェストの形式の版。互換性のルールは未決（design.md 7章）。
@@ -67,8 +70,10 @@ type Operation struct {
 	Anonymous bool       `json:"anonymous,omitempty"`
 	Expose    []Exposure `json:"expose,omitempty"`
 	HTTP      *HTTP      `json:"http,omitempty"`
-	Input     Schema     `json:"input"`
-	Output    Schema     `json:"output"`
+	// RateLimits は公開範囲ごとのレートリミット。無い公開範囲では数えない。
+	RateLimits []RateLimit `json:"rate_limits,omitempty"`
+	Input      Schema      `json:"input"`
+	Output     Schema      `json:"output"`
 }
 
 // Authz は認可の宣言。iam の `authz:check` に渡す（design.md 6章）。
@@ -197,4 +202,46 @@ func Read(r io.Reader) (*Manifest, error) {
 // Unmarshal は Read のバイト列版。
 func Unmarshal(b []byte) (*Manifest, error) {
 	return Read(bytes.NewReader(b))
+}
+
+// RateLimit は1つの公開範囲のレートリミット。Limit は「回数/単位」（単位は s・min・h。例：600/min）。
+type RateLimit struct {
+	Audience string `json:"audience"`
+	Limit    string `json:"limit"`
+}
+
+// Rate はレートリミットの回数と期間。
+type Rate struct {
+	Requests int
+	Per      time.Duration
+}
+
+// ParseRate は「回数/単位」を読む。
+func ParseRate(s string) (Rate, error) {
+	n, unit, ok := strings.Cut(s, "/")
+	if !ok {
+		return Rate{}, fmt.Errorf("rate limit %q must be <count>/<unit>", s)
+	}
+	count, err := strconv.Atoi(n)
+	if err != nil || count <= 0 {
+		return Rate{}, fmt.Errorf("rate limit %q: count must be a positive integer", s)
+	}
+	per, ok := rateUnits[unit]
+	if !ok {
+		return Rate{}, fmt.Errorf("rate limit %q: unit must be s, min or h", s)
+	}
+	return Rate{Requests: count, Per: per}, nil
+}
+
+var rateUnits = map[string]time.Duration{"s": time.Second, "min": time.Minute, "h": time.Hour}
+
+// RateFor は、その公開範囲のレートリミット。無ければ false。
+func (o *Operation) RateFor(audience string) (Rate, bool) {
+	for _, r := range o.RateLimits {
+		if r.Audience == audience {
+			rate, err := ParseRate(r.Limit)
+			return rate, err == nil
+		}
+	}
+	return Rate{}, false
 }

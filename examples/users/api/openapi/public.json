@@ -95,6 +95,9 @@
           "403": {
             "$ref": "#/components/responses/Error"
           },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
           "500": {
             "$ref": "#/components/responses/Error"
           },

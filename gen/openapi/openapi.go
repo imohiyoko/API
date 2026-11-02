@@ -44,7 +44,7 @@ func Generate(m *manifest.Manifest, audience string, info Info) ([]byte, error) 
 			item = obj{}
 			paths[path] = item
 		}
-		item[lower(method)] = operation(op, method, visible)
+		item[lower(method)] = operation(op, audience, method, visible)
 	}
 	doc := obj{
 		"openapi": "3.1.0",
@@ -85,7 +85,7 @@ func Generate(m *manifest.Manifest, audience string, info Info) ([]byte, error) 
 	return append(b, '\n'), nil
 }
 
-func operation(op *manifest.Operation, method string, visible func(string) bool) obj {
+func operation(op *manifest.Operation, audience, method string, visible func(string) bool) obj {
 	o := obj{"operationId": op.Name}
 	if op.Doc != "" {
 		o["summary"] = op.Doc
@@ -130,6 +130,9 @@ func operation(op *manifest.Operation, method string, visible func(string) bool)
 	}
 	if len(op.Input.Fields) > 0 {
 		responses["400"] = errRef
+	}
+	if _, ok := op.RateFor(audience); ok {
+		responses["429"] = errRef
 	}
 	// ハンドラーが返す not_found や conflict など、操作ごとには分からない誤り。
 	responses["default"] = errRef

@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"mime"
+	"net"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/imohiyoko/API/define"
@@ -42,7 +45,7 @@ func (h *restOp) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	token, hasToken := bearer(r.Header.Get("Authorization"))
-	body, err := h.run(r.Context(), token, hasToken, &restSource{r: r, m: h.m, aud: h.aud, needBody: hasBody(h.spec)})
+	body, err := h.run(r.Context(), token, hasToken, clientHost(r.RemoteAddr), &restSource{r: r, m: h.m, aud: h.aud, needBody: hasBody(h.spec)})
 	if err != nil {
 		h.writeError(w, err)
 		return
@@ -62,6 +65,9 @@ func (h *restOp) writeError(w http.ResponseWriter, err error) {
 	msg, reasons := h.disclose(e)
 	if e.Code == define.CodeUnauthenticated {
 		w.Header().Set("WWW-Authenticate", "Bearer")
+	}
+	if e.RetryAfter > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(e.RetryAfter.Seconds()))))
 	}
 	writeJSON(w, define.HTTPStatus(e.Code), errorBody{Error: string(e.Code), Message: msg, Reasons: reasons})
 }
@@ -130,4 +136,12 @@ func (s *restSource) Body() (map[string]json.RawMessage, error) {
 		return nil, errors.New("must be a JSON object")
 	}
 	return s.body, nil
+}
+
+// clientHost はアドレスからポートを除く。
+func clientHost(addr string) string {
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		return h
+	}
+	return addr
 }

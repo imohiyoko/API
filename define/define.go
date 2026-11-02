@@ -79,6 +79,14 @@ func Anonymous() Option {
 	return func(o *manifest.Operation) { o.Anonymous = true }
 }
 
+// RateLimit は公開範囲ごとのレートリミット（例：RateLimit(Partner, "600/min")）。単位は s・min・h。
+// 呼び出し元ごとに数える：partner は Org ごと、それ以外は主体ごと、匿名の呼び出しは接続元のアドレスごと（design.md 4.4）。
+func RateLimit(audience, limit string) Option {
+	return func(o *manifest.Operation) {
+		o.RateLimits = append(o.RateLimits, manifest.RateLimit{Audience: audience, Limit: limit})
+	}
+}
+
 // Expose は公開の許可。公開範囲に、どのプロトコルで出すか。書かない操作はどこにも出ない。
 func Expose(audience string, protocols ...string) Option {
 	return func(o *manifest.Operation) {

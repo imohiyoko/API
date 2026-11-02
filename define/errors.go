@@ -3,6 +3,7 @@ package define
 import (
 	"fmt"
 	"net/http"
+	"time"
 )
 
 // Code はエラーの種類。プロトコルごとの表し方（HTTP の状態コードなど）は runtime が決める。
@@ -15,6 +16,7 @@ const (
 	CodeNotFound           Code = "not_found"
 	CodeConflict           Code = "conflict"
 	CodeFailedPrecondition Code = "failed_precondition"
+	CodeResourceExhausted  Code = "resource_exhausted" // レートリミットを超えた
 	CodeUnavailable        Code = "unavailable"
 	CodeInternal           Code = "internal"
 )
@@ -25,6 +27,8 @@ type Error struct {
 	Message string
 	// Reasons は理由のコード（iam の拒否の理由など）。見せるかは公開範囲で決まる（design.md 4.1）。
 	Reasons []string
+	// RetryAfter は、もう一度呼べるまでの時間（レートリミット）。0 なら知らせない。
+	RetryAfter time.Duration
 }
 
 func (e *Error) Error() string {
@@ -54,6 +58,8 @@ func HTTPStatus(c Code) int {
 		return http.StatusConflict
 	case CodeFailedPrecondition:
 		return http.StatusPreconditionFailed
+	case CodeResourceExhausted:
+		return http.StatusTooManyRequests
 	case CodeUnavailable:
 		return http.StatusServiceUnavailable
 	default:

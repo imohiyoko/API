@@ -32,6 +32,16 @@
           ]
         }
       ],
+      "rate_limits": [
+        {
+          "audience": "partner",
+          "limit": "600/min"
+        },
+        {
+          "audience": "public",
+          "limit": "60/min"
+        }
+      ],
       "input": {
         "type": "object",
         "fields": [
@@ -96,6 +106,12 @@
           "protocols": [
             "rest"
           ]
+        }
+      ],
+      "rate_limits": [
+        {
+          "audience": "partner",
+          "limit": "120/min"
         }
       ],
       "input": {

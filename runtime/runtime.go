@@ -55,6 +55,8 @@ func DefaultAudienceConfig(audience string) AudienceConfig {
 type Config struct {
 	Authenticator port.Authenticator
 	Authorizer    port.Authorizer
+	// RateLimiter はレートリミットを数える。nil ならプロセス内で数える（NewMemoryRateLimiter）。
+	RateLimiter port.RateLimiter
 	// Audiences は公開範囲ごとの設定の上書き。
 	Audiences map[string]AudienceConfig
 	Logger    *slog.Logger
@@ -84,6 +86,9 @@ func Build(reg *define.Registry, cfg Config) (*Server, error) {
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
+	}
+	if cfg.RateLimiter == nil {
+		cfg.RateLimiter = NewMemoryRateLimiter(nil)
 	}
 	s := &Server{manifest: m, handlers: map[string]http.Handler{}, grpc: map[string]*grpcAudience{}, audiences: map[string]AudienceConfig{}}
 	for _, d := range ds {
