@@ -6,11 +6,11 @@
 
 ## 背景
 
-6つのプロトコルを一度には作れない。
+6つのプロトコル（REST・gRPC・GraphQL・WebSocket・Webhook・SOAP）を一度には作れない。SSE は REST の Stream の実装として扱い、数に含めない。
 
 ## 決定
 
-REST → gRPC → GraphQL → WebSocket・Webhook・SSE の順に足し、SOAP は必要になってから足す。
+REST → gRPC → GraphQL → WebSocket・Webhook（と REST の Stream としての SSE）の順に足し、SOAP は必要になってから足す。
 
 ## 結果
 

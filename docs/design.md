@@ -105,7 +105,7 @@ type User struct {
 | 項目 | internal | partner | public |
 |---|---|---|---|
 | 呼び出し元 | 社内のサービス | 提携先の Org | 一般の開発者・エンドユーザー |
-| 認証（iam） | サービスアカウントのトークン | 提携先 Org のサービスアカウント（トークンか API キー） | ユーザーのアクセストークン（OIDC）か API キー |
+| 認証（iam） | サービスアカウントのトークン | 提携先 Org のサービスアカウント（トークンか API キー） | iam（OIDC Provider）が発行した OAuth 2.0 のアクセストークンか API キー。ID トークンは受けない |
 | 口 | 別の listener（社内網だけ） | 別の listener | 別の listener |
 | フィールド | すべて | `min=partner` 以上 | `min=public` だけ |
 | エラーの詳しさ | 拒否の理由コードまで | 理由コード | 一般的なコードだけ |
@@ -122,12 +122,20 @@ type User struct {
 - フィールドの `min` を書かなければ、その操作を出すすべての公開範囲に出る
 - public に出す操作は `Authz` か、明示的な `define.Anonymous` が要る
 
-### 4.3 定義の段で拒むもの
+### 4.3 定義の検査
+
+`api check` と起動時に検査する。エラーが1つでもあれば `api check` は 0 以外で終わり、起動も拒む。警告は報告するだけで、終了コードは 0（`--strict` で警告もエラーにする）。
+
+エラー：
 
 - 種類とプロトコルの組み合わせが 5.1 の表で「―」
 - public に出すのに `Authz` も `Anonymous` も無い
-- フィールドの `min` が、操作を出す公開範囲より広い（出しても見えないだけなので警告）
+- REST に出す Command の HTTP メソッドが決まらない（5.1）
 - 同じ公開範囲・プロトコルの中で、パス・メソッド名・フィールド名がぶつかる
+
+警告：
+
+- フィールドの `min` が、操作を出すどの公開範囲よりも狭い（どこにも見えないフィールドになる）
 
 ## 5. プロトコル
 
@@ -136,9 +144,12 @@ type User struct {
 | 種類 | REST | GraphQL | gRPC | SOAP | WebSocket | Webhook |
 |---|---|---|---|---|---|---|
 | Query | GET | Query | unary | operation | ― | ― |
-| Command | POST / PUT / PATCH / DELETE | Mutation | unary | operation | ― | ― |
+| Command | 下の規則で決める | Mutation | unary | operation | ― | ― |
 | Stream | SSE | Subscription | server streaming | ― | メッセージ | ― |
 | Event | ― | Subscription | server streaming | ― | メッセージ | POST（送信） |
+
+- SSE は独立したプロトコルではなく、REST の Stream の実装として扱う（M5 で足す）
+- REST の Command の HTTP メソッドは、`define.HTTP` で指定する。省略したときは操作の名前の最後の語で決める：`create` → POST、`replace` → PUT、`update` → PATCH、`delete` → DELETE。どれにも当たらなければエラー（4.3）。冪等性は PUT・DELETE だけを冪等として契約に書く
 
 ### 5.2 実装と契約
 
@@ -152,6 +163,7 @@ type User struct {
 | SOAP | WSDL | 自前（`encoding/xml`）。M6 以降 |
 
 - Webhook は送る側なので、配信先の登録・一覧・削除の操作も自動で作り、その Event と同じ公開範囲に出す
+  - これらの操作は Event の `Anonymous` を継承しない。権限 `webhooks:manage` の `Authz` を持ち、配信先は登録した主体の Org（Org が無ければ主体）をリソースとして検査する。ほかの Org の配信先は見えない
 - 入力の検証・認証・認可・レートリミット・監査ログは、プロトコルに入る前の共通の層（`runtime`）で行う
 
 ## 6. 認証と認可（iam）
