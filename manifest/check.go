@@ -65,9 +65,13 @@ func Check(m *Manifest) []Diagnostic {
 		seenAud[a] = true
 	}
 	narrowest := auds[len(auds)-1]
+	if m.Name != "" && !nameRe.MatchString(m.Name) {
+		add(Error, "", "invalid API name %q", m.Name)
+	}
 
 	seenOp := map[string]bool{}
-	routes := map[string]string{} // audience + route key → operation
+	routes := map[string]string{}    // audience + route key → operation
+	grpcNames := map[string]string{} // audience + gRPC name → operation
 	for i := range m.Operations {
 		op := &m.Operations[i]
 		n := op.Name
@@ -120,6 +124,13 @@ func Check(m *Manifest) []Diagnostic {
 				if !Implemented[p] {
 					add(Warning, n, "%s is not implemented yet; the %s exposure is ignored", p, e.Audience)
 					continue
+				}
+				if p == GRPC {
+					if !GRPCServes(op.Kind) {
+						add(Warning, n, "%s", grpcIgnored(op.Kind, e.Audience))
+						continue
+					}
+					checkGRPC(op, e.Audience, grpcNames, add)
 				}
 				if p == REST {
 					method, path, err := op.ResolveHTTP()

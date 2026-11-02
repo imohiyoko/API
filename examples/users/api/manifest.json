@@ -1,5 +1,6 @@
 {
   "version": "api.manifest/v0",
+  "name": "users",
   "operations": [
     {
       "name": "users.get",
@@ -86,7 +87,8 @@
         {
           "audience": "internal",
           "protocols": [
-            "rest"
+            "rest",
+            "grpc"
           ]
         },
         {
@@ -156,7 +158,8 @@
         {
           "audience": "internal",
           "protocols": [
-            "rest"
+            "rest",
+            "grpc"
           ]
         }
       ],
@@ -233,7 +236,8 @@
         {
           "audience": "internal",
           "protocols": [
-            "rest"
+            "rest",
+            "grpc"
           ]
         }
       ],

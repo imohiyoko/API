@@ -16,6 +16,7 @@ import (
 
 	"github.com/imohiyoko/API/define"
 	"github.com/imohiyoko/API/gen/openapi"
+	"github.com/imohiyoko/API/gen/proto"
 	"github.com/imohiyoko/API/manifest"
 )
 
@@ -32,7 +33,7 @@ func Main(reg *define.Registry, args []string) int {
 const usage = `usage:
   check [-strict]                       定義を検査する（エラーがあれば終了コード 1）
   manifest [-o file]                    マニフェストを JSON で書き出す
-  gen [-out dir] [-title t] [-version v] 公開範囲ごとの openapi/<audience>.json とマニフェストを書き出す
+  gen [-out dir] [-title t] [-version v] 公開範囲ごとの openapi/<audience>.json・proto/<audience>.proto とマニフェストを書き出す
 `
 
 // Run はマニフェストでコマンドを実行し、終了コードを返す。
@@ -104,10 +105,13 @@ func check(m *manifest.Manifest, strict bool, w io.Writer) int {
 	return 0
 }
 
-// Generate は dir に manifest.json と openapi/<audience>.json を書く。REST に何も出さない公開範囲の文書は作らず、以前のものがあれば消す。
+// Generate は dir に manifest.json と、公開範囲ごとの openapi/<audience>.json（REST）・proto/<audience>.proto（gRPC）を書く。
+// そのプロトコルで何も出さない公開範囲の文書は作らず、以前のものがあれば消す（出さなくなった操作が契約に残らないように）。
 func Generate(m *manifest.Manifest, dir string, info openapi.Info) error {
-	if err := os.MkdirAll(filepath.Join(dir, "openapi"), 0o755); err != nil {
-		return err
+	for _, sub := range []string{"openapi", "proto"} {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
+			return err
+		}
 	}
 	b, err := manifest.Marshal(m)
 	if err != nil {
@@ -117,20 +121,28 @@ func Generate(m *manifest.Manifest, dir string, info openapi.Info) error {
 		return err
 	}
 	for _, aud := range m.AudienceList() {
-		path := filepath.Join(dir, "openapi", aud+".json")
-		if !exposesREST(m, aud) {
-			// 以前の gen の文書が残ると、出さなくなった操作が契約に載ったままになる。
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		docs := []struct {
+			path   string
+			expose bool
+			gen    func() ([]byte, error)
+		}{
+			{filepath.Join(dir, "openapi", aud+".json"), exposesREST(m, aud), func() ([]byte, error) { return openapi.Generate(m, aud, info) }},
+			{filepath.Join(dir, "proto", aud+".proto"), proto.Exposes(m, aud), func() ([]byte, error) { return proto.Generate(m, aud) }},
+		}
+		for _, d := range docs {
+			if !d.expose {
+				if err := os.Remove(d.path); err != nil && !os.IsNotExist(err) {
+					return err
+				}
+				continue
+			}
+			doc, err := d.gen()
+			if err != nil {
+				return fmt.Errorf("%s: %w", d.path, err)
+			}
+			if err := os.WriteFile(d.path, doc, 0o644); err != nil {
 				return err
 			}
-			continue
-		}
-		doc, err := openapi.Generate(m, aud, info)
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(path, doc, 0o644); err != nil {
-			return err
 		}
 	}
 	return nil
