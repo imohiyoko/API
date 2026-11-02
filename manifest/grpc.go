@@ -55,14 +55,24 @@ func GRPCServes(kind string) bool { return kind == KindQuery || kind == KindComm
 var protoIdentRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // checkGRPC は gRPC で出すときの制約を見る。names は公開範囲ごとの、使った名前と操作。
-func checkGRPC(op *Operation, aud string, names map[string]string, add func(Severity, string, string, ...any)) {
+type grpcIdent struct{ op, kind string }
+
+func checkGRPC(op *Operation, aud string, names map[string]grpcIdent, add func(Severity, string, string, ...any)) {
 	n := op.ResolveGRPC()
-	for _, name := range []string{n.Service + "." + n.Method, n.Request, n.Reply} {
-		key := aud + " " + name
-		if other, ok := names[key]; ok && other != op.Name {
-			add(Error, op.Name, "gRPC name %s on %s conflicts with %s", name, aud, other)
+	// パッケージの直下の名前（サービスとメッセージ）と、メソッドの完全な名前がぶつからないこと。
+	// サービスは複数の操作で同じでよいが、メッセージと同じ名前にはできない。
+	idents := []struct{ name, kind string }{
+		{n.Service, "service"}, {n.Service + "." + n.Method, "method"}, {n.Request, "message"}, {n.Reply, "message"},
+	}
+	for _, id := range idents {
+		key := aud + " " + id.name
+		prev, ok := names[key]
+		if ok && prev.op != op.Name && !(id.kind == "service" && prev.kind == "service") {
+			add(Error, op.Name, "gRPC name %s on %s conflicts with %s", id.name, aud, prev.op)
 		}
-		names[key] = op.Name
+		if !ok {
+			names[key] = grpcIdent{op: op.Name, kind: id.kind}
+		}
 	}
 	checkProtoSchema(op.Name, "input", op.Input, add)
 	checkProtoSchema(op.Name, "output", op.Output, add)

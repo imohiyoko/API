@@ -118,10 +118,8 @@ func (g *grpcOp) serve(ctx context.Context, req *dynamicpb.Message) (res any, er
 			token, hasToken = bearer(v[0])
 		}
 	}
-	src, err := newGRPCSource(req, g.spec, g.m, g.aud)
-	if err != nil {
-		return nil, g.status(&define.Error{Code: define.CodeInvalidArgument, Message: err.Error()})
-	}
+	// 変換の誤りは Body() で返す。REST と同じく、認証と主体の確認のあとで invalid_argument になる。
+	src := newGRPCSource(req, g.spec, g.m, g.aud)
 	out, err := g.run(ctx, token, hasToken, src)
 	if err != nil {
 		return nil, g.status(err)
@@ -178,12 +176,13 @@ type grpcSource struct {
 	aud    string
 	values map[string]json.RawMessage
 	body   map[string]json.RawMessage
+	err    error
 }
 
-func newGRPCSource(req protoreflect.Message, spec *manifest.Operation, m *manifest.Manifest, aud string) (*grpcSource, error) {
+func newGRPCSource(req protoreflect.Message, spec *manifest.Operation, m *manifest.Manifest, aud string) *grpcSource {
 	all, err := messageJSON(req)
 	if err != nil {
-		return nil, err
+		return &grpcSource{m: m, aud: aud, err: err}
 	}
 	s := &grpcSource{m: m, aud: aud, values: all}
 	for _, f := range spec.Input.Fields {
@@ -194,7 +193,7 @@ func newGRPCSource(req protoreflect.Message, spec *manifest.Operation, m *manife
 			s.body[f.Name] = v
 		}
 	}
-	return s, nil
+	return s
 }
 
 func (s *grpcSource) PathValue(name string) string {
@@ -221,7 +220,8 @@ func (s *grpcSource) QueryValues(name string) ([]string, bool) {
 	return []string{rawString(raw)}, true
 }
 
-func (s *grpcSource) Body() (map[string]json.RawMessage, error) { return s.body, nil }
+// Body は body のフィールド。define の Decode は最初にこれを呼ぶので、メッセージの変換の誤りもここで返す。
+func (s *grpcSource) Body() (map[string]json.RawMessage, error) { return s.body, s.err }
 
 func (s *grpcSource) Visible(min string) bool { return s.m.Visible(min, s.aud) }
 

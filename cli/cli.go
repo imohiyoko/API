@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/imohiyoko/API/define"
 	"github.com/imohiyoko/API/gen/openapi"
@@ -119,6 +120,21 @@ func Generate(m *manifest.Manifest, dir string, info openapi.Info) error {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), b, 0o644); err != nil {
 		return err
+	}
+	// 公開範囲そのものを無くしたときも、その公開範囲の古い文書を消す。
+	auds := map[string]bool{}
+	for _, aud := range m.AudienceList() {
+		auds[aud] = true
+	}
+	for _, pat := range []string{filepath.Join(dir, "openapi", "*.json"), filepath.Join(dir, "proto", "*.proto")} {
+		old, _ := filepath.Glob(pat)
+		for _, f := range old {
+			if aud := strings.TrimSuffix(filepath.Base(f), filepath.Ext(f)); !auds[aud] {
+				if err := os.Remove(f); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	for _, aud := range m.AudienceList() {
 		docs := []struct {

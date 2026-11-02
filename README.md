@@ -19,9 +19,11 @@ var getUser = define.Query[GetUserIn, User]("users.get",
 
 reg := define.NewRegistry(define.WithName("users")).Add(getUser)
 srv, err := runtime.Build(reg, runtime.Config{Authenticator: iamClient, Authorizer: iamClient})
-http.ListenAndServe(":8092", srv.Handler(define.Public)) // 公開範囲ごとに別の listener
-gs, err := srv.GRPCServer(define.Internal)               // 同じ定義の gRPC（users.internal.Users/Get）
-gs.Serve(internalListener)
+// 公開範囲・プロトコルごとに別の listener
+go func() { log.Fatal(http.ListenAndServe(":8092", srv.Handler(define.Public))) }()
+gs, err := srv.GRPCServer(define.Internal) // 同じ定義の gRPC（users.internal.Users/Get）
+lis, err := net.Listen("tcp", "127.0.0.1:9090")
+log.Fatal(gs.Serve(lis))
 ```
 
 例は [examples/users](examples/users)。生成した契約ファイルは [examples/users/api](examples/users/api)。

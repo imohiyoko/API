@@ -70,8 +70,8 @@ func Check(m *Manifest) []Diagnostic {
 	}
 
 	seenOp := map[string]bool{}
-	routes := map[string]string{}    // audience + route key → operation
-	grpcNames := map[string]string{} // audience + gRPC name → operation
+	routes := map[string]string{}       // audience + route key → operation
+	grpcNames := map[string]grpcIdent{} // audience + gRPC name → operation
 	for i := range m.Operations {
 		op := &m.Operations[i]
 		n := op.Name

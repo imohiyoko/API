@@ -250,6 +250,34 @@ func TestRESTAndGRPCAgree(t *testing.T) {
 	}
 }
 
+// 入力の変換の誤り（NaN）も、REST と同じく認証のあとに返す。
+func TestGRPCInputErrorsComeAfterAuthentication(t *testing.T) {
+	ratio := define.Command[struct {
+		R float64 `api:"r"`
+	}, string]("ratios.create",
+		define.Authz("ratios:create"),
+		define.Expose(define.Public, define.GRPC),
+	).Handle(func(context.Context, struct {
+		R float64 `api:"r"`
+	}) (string, error) {
+		return "ok", nil
+	})
+	authn := memory.NewAuthenticator().Add("user", port.Principal{Type: port.PrincipalUser, ID: "usr_1"})
+	authz := memory.NewAuthorizer()
+	authz.Allow(memory.Grant{PrincipalID: "usr_1", Action: "ratios:create"})
+	srv, err := runtime.Build(define.NewRegistry().Add(ratio), runtime.Config{Authenticator: authn, Authorizer: authz})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := dialGRPC(t, srv, "public")
+	if o := c.call(t, "Ratios", "Create", "", `{"r":"NaN"}`); o.Code != "unauthenticated" {
+		t.Errorf("no token: %+v", o)
+	}
+	if o := c.call(t, "Ratios", "Create", "user", `{"r":"NaN"}`); o.Code != "invalid_argument" {
+		t.Errorf("NaN: %+v", o)
+	}
+}
+
 func TestGRPCServerOnlyForExposedAudiences(t *testing.T) {
 	srv := parityServer(t)
 	if _, err := srv.GRPCServer("partner"); err == nil {

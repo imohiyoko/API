@@ -62,6 +62,10 @@ func TestCheckReportsEveryRule(t *testing.T) {
 			op("a_b.c", "query", func(o *manifest.Operation) { o.Expose[0].Protocols = []string{"grpc"} }),
 			op("a.b_c", "query", func(o *manifest.Operation) { o.Expose[0].Protocols = []string{"grpc"} }),
 		}, manifest.Error, "conflicts with a_b.c"},
+		{"grpc service vs message", []manifest.Operation{
+			op("users_request.get", "query", func(o *manifest.Operation) { o.Expose[0].Protocols = []string{"grpc"} }),
+			op("users", "query", func(o *manifest.Operation) { o.Expose[0].Protocols = []string{"grpc"} }),
+		}, manifest.Error, "UsersRequest on public conflicts with users_request.get"},
 		{"grpc array of arrays", []manifest.Operation{op("a.get", "query", func(o *manifest.Operation) {
 			o.Expose[0].Protocols = []string{"grpc"}
 			inner := manifest.Schema{Type: "array", Items: &manifest.Schema{Type: "string"}}

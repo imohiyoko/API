@@ -77,3 +77,21 @@ func TestGenRemovesStaleDocuments(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestGenRemovesDocumentsOfRemovedAudiences(t *testing.T) {
+	m, _ := users.Registry(&users.Store{}).Manifest()
+	dir := t.TempDir()
+	stale := []string{filepath.Join(dir, "openapi", "vip.json"), filepath.Join(dir, "proto", "vip.proto")}
+	for _, f := range stale {
+		_ = os.MkdirAll(filepath.Dir(f), 0o755)
+		_ = os.WriteFile(f, []byte("old"), 0o644)
+	}
+	if err := cli.Generate(m, dir, openapi.Info{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range stale {
+		if _, err := os.Stat(f); !os.IsNotExist(err) {
+			t.Errorf("%s should be removed", f)
+		}
+	}
+}

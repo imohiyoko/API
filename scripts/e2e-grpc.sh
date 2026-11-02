@@ -14,12 +14,19 @@ if [ -z "$grpcurl" ]; then
   grpcurl="$work/grpcurl"
 fi
 
-"$work/users" serve >"$work/serve.log" 2>&1 &
+# 開発用のトークンを使うため、iam の設定は消して起動する。
+IAM_PUBLIC_URL= "$work/users" serve >"$work/serve.log" 2>&1 &
 pid=$!
+ready=
 for _ in $(seq 100); do
-  grep -q "internal gRPC on" "$work/serve.log" && break
+  if grep -q "internal gRPC on" "$work/serve.log"; then ready=1; break; fi
+  # 起動に失敗した（ポートが使われているなど）なら、ほかのサーバーを呼ばないように止める。
+  kill -0 "$pid" 2>/dev/null || break
   sleep 0.1
 done
+if [ -z "$ready" ]; then
+  echo "FAIL: the server did not start"; cat "$work/serve.log"; exit 1
+fi
 
 call() { # token method json
   "$grpcurl" -plaintext -import-path examples/users/api/proto -proto internal.proto \
