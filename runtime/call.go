@@ -48,7 +48,7 @@ func (c *opCall) run(ctx context.Context, token string, hasToken bool, client st
 
 	// レートリミット（design.md 4.4）。認可の前に数え、超えた呼び出しで iam を呼ばない。
 	if rate, ok := c.spec.RateFor(c.aud); ok {
-		key := c.aud + "|" + c.spec.Name + "|" + rateKey(c.ac, principal, client)
+		key := c.m.APIName() + "|" + c.aud + "|" + c.spec.Name + "|" + rateKey(c.ac, principal, client)
 		allowed, retry, err := c.cfg.RateLimiter.Allow(ctx, key, port.Rate{Requests: rate.Requests, Per: rate.Per})
 		if err != nil {
 			return nil, c.unavailable("rate limit", err)

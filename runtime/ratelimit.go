@@ -8,15 +8,22 @@ import (
 	"github.com/imohiyoko/API/port"
 )
 
-// maxBuckets を超えたら、満タンに戻った（しばらく呼ばれていない）バケツを捨てる。
+// maxBuckets に達したら、満タンに戻った（しばらく呼ばれていない）バケツを捨てる。
+// 捨てられるものがなければ、任意のバケツを1つ捨ててから新しいキーを入れる。
+// 捨てられたキーは満タンからやり直すので、そのぶん上限をわずかに超えうるが、メモリは maxBuckets で止まる。
 const maxBuckets = 100000
+
+// purgeEvery は全バケツを走査する掃除の最短間隔。満杯が続いても新しいキーごとに走査しない。
+const purgeEvery = time.Second
 
 // MemoryRateLimiter はプロセス内のトークンバケット。期間あたり Requests 回まで、続けて Requests 回まで呼べる。
 // プロセスごとに数えるので、複数のプロセスで動かすと上限はプロセスの数だけ増える。
 type MemoryRateLimiter struct {
 	now     func() time.Time
-	mu      sync.Mutex
-	buckets map[string]*bucket
+	mu        sync.Mutex
+	buckets   map[string]*bucket
+	lastPurge time.Time
+	max       int
 }
 
 type bucket struct {
@@ -30,7 +37,7 @@ func NewMemoryRateLimiter(now func() time.Time) *MemoryRateLimiter {
 	if now == nil {
 		now = time.Now
 	}
-	return &MemoryRateLimiter{now: now, buckets: map[string]*bucket{}}
+	return &MemoryRateLimiter{now: now, buckets: map[string]*bucket{}, max: maxBuckets}
 }
 
 // Allow は port.RateLimiter を満たす。
@@ -40,8 +47,8 @@ func (l *MemoryRateLimiter) Allow(_ context.Context, key string, rate port.Rate)
 	defer l.mu.Unlock()
 	b, ok := l.buckets[key]
 	if !ok || b.rate != rate {
-		if len(l.buckets) >= maxBuckets {
-			l.purge(now)
+		if !ok {
+			l.makeRoom(now)
 		}
 		b = &bucket{tokens: float64(rate.Requests), last: now, rate: rate}
 		l.buckets[key] = b
@@ -63,6 +70,23 @@ func (b *bucket) refill(now time.Time) {
 			b.tokens = max
 		}
 		b.last = now
+	}
+}
+
+// makeRoom はバケツの数を max 未満にする。
+func (l *MemoryRateLimiter) makeRoom(now time.Time) {
+	if len(l.buckets) < l.max {
+		return
+	}
+	if now.Sub(l.lastPurge) >= purgeEvery || now.Before(l.lastPurge) {
+		l.lastPurge = now
+		l.purge(now)
+	}
+	for k := range l.buckets {
+		if len(l.buckets) < l.max {
+			break
+		}
+		delete(l.buckets, k)
 	}
 }
 
