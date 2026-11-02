@@ -3,6 +3,7 @@ package users
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/imohiyoko/API/define"
@@ -40,6 +41,7 @@ type Deleted struct{}
 type Store struct {
 	mu    sync.Mutex
 	users []User
+	next  int // 採番。削除しても戻さない。
 }
 
 // Registry は操作の定義を返す。
@@ -83,7 +85,8 @@ func Registry(s *Store) *define.Registry {
 	).Handle(func(_ context.Context, in CreateUserIn) (User, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		u := User{ID: "usr_" + string(rune('a'+len(s.users))), Name: in.Name, Email: in.Email, Note: in.Note}
+		s.next++
+		u := User{ID: fmt.Sprintf("usr_%d", s.next), Name: in.Name, Email: in.Email, Note: in.Note}
 		s.users = append(s.users, u)
 		return u, nil
 	})

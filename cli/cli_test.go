@@ -9,6 +9,7 @@ import (
 
 	"github.com/imohiyoko/API/cli"
 	"github.com/imohiyoko/API/examples/users"
+	"github.com/imohiyoko/API/gen/openapi"
 	"github.com/imohiyoko/API/manifest"
 )
 
@@ -43,5 +44,32 @@ func TestGenWritesOneDocumentPerAudience(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
 			t.Error(err)
 		}
+	}
+}
+
+func TestGenRemovesStaleDocuments(t *testing.T) {
+	m, _ := users.Registry(&users.Store{}).Manifest()
+	dir := t.TempDir()
+	if err := cli.Generate(m, dir, openapi.Info{}); err != nil {
+		t.Fatal(err)
+	}
+	// public から外すと、前回の public.json は消える。
+	for i := range m.Operations {
+		var kept []manifest.Exposure
+		for _, e := range m.Operations[i].Expose {
+			if e.Audience != manifest.Public {
+				kept = append(kept, e)
+			}
+		}
+		m.Operations[i].Expose = kept
+	}
+	if err := cli.Generate(m, dir, openapi.Info{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "openapi", "public.json")); !os.IsNotExist(err) {
+		t.Fatalf("public.json should be removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "openapi", "partner.json")); err != nil {
+		t.Fatal(err)
 	}
 }

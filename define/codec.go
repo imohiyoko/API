@@ -67,7 +67,7 @@ func decodeInput(v reflect.Value, p *structPlan, s manifest.Schema, src InputSou
 			raw, ok := body[f.name]
 			present = ok && visible
 			if present {
-				if err := decodeJSON(raw, fv); err != nil {
+				if err := decodeJSON(raw, fv, src.Visible); err != nil {
 					return invalid("%s: %v", f.name, err)
 				}
 			}
@@ -85,8 +85,13 @@ func decodeInput(v reflect.Value, p *structPlan, s manifest.Schema, src InputSou
 }
 
 // decodeJSON は JSON の値を、api タグに従って v に入れる。
-func decodeJSON(raw json.RawMessage, v reflect.Value) error {
+// visible で見えないフィールドは無いものとして扱う（送られれば unknown field）。
+// null はポインターのフィールドだけ受ける（必須フィールドや配列の要素の null はゼロ値にしない）。
+func decodeJSON(raw json.RawMessage, v reflect.Value, visible func(string) bool) error {
 	if string(raw) == "null" {
+		if v.Kind() != reflect.Pointer {
+			return fmt.Errorf("null is not allowed")
+		}
 		v.SetZero()
 		return nil
 	}
@@ -94,7 +99,7 @@ func decodeJSON(raw json.RawMessage, v reflect.Value) error {
 		if v.IsNil() {
 			v.Set(reflect.New(v.Type().Elem()))
 		}
-		return decodeJSON(raw, v.Elem())
+		return decodeJSON(raw, v.Elem(), visible)
 	}
 	t := v.Type()
 	if t != timeType && t != bytesType {
@@ -109,6 +114,9 @@ func decodeJSON(raw json.RawMessage, v reflect.Value) error {
 				return err
 			}
 			for _, f := range p.fields {
+				if !visible(f.min) {
+					continue
+				}
 				r, ok := obj[f.name]
 				if !ok {
 					if !f.optional {
@@ -116,7 +124,7 @@ func decodeJSON(raw json.RawMessage, v reflect.Value) error {
 					}
 					continue
 				}
-				if err := decodeJSON(r, v.FieldByIndex(f.index)); err != nil {
+				if err := decodeJSON(r, v.FieldByIndex(f.index), visible); err != nil {
 					return fmt.Errorf("%s: %w", f.name, err)
 				}
 				delete(obj, f.name)
@@ -132,7 +140,7 @@ func decodeJSON(raw json.RawMessage, v reflect.Value) error {
 			}
 			s := reflect.MakeSlice(t, len(arr), len(arr))
 			for i, r := range arr {
-				if err := decodeJSON(r, s.Index(i)); err != nil {
+				if err := decodeJSON(r, s.Index(i), visible); err != nil {
 					return fmt.Errorf("[%d]: %w", i, err)
 				}
 			}

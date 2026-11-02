@@ -120,8 +120,11 @@ func schemaRec(t reflect.Type, visiting map[reflect.Type]bool) (manifest.Schema,
 		return manifest.Schema{Type: "boolean"}, nil
 	case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Uint8, reflect.Uint16:
 		return manifest.Schema{Type: "integer", Format: "int32"}, nil
-	case reflect.Int, reflect.Int64, reflect.Uint, reflect.Uint32, reflect.Uint64:
+	case reflect.Int, reflect.Int64, reflect.Uint32:
 		return manifest.Schema{Type: "integer", Format: "int64"}, nil
+	case reflect.Uint, reflect.Uint64, reflect.Uintptr:
+		// int64 の範囲を超える値を契約（format: int64）で表せないので受けない。
+		return manifest.Schema{}, fmt.Errorf("type %s is not supported (use int64)", t)
 	case reflect.Float32:
 		return manifest.Schema{Type: "number", Format: "float"}, nil
 	case reflect.Float64:

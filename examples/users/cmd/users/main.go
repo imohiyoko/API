@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/imohiyoko/API/adapters/iam"
 	"github.com/imohiyoko/API/adapters/memory"
@@ -62,7 +63,14 @@ func main() {
 	// 公開範囲ごとに別の listener（design.md 4.1）。internal は社内網だけに出す。
 	addrs := map[string]string{"internal": "127.0.0.1:8090", "partner": ":8091", "public": ":8092"}
 	for aud, addr := range addrs {
-		s := &http.Server{Addr: addr, Handler: srv.Handler(aud)}
+		s := &http.Server{
+			Addr:              addr,
+			Handler:           srv.Handler(aud),
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       15 * time.Second,
+			WriteTimeout:      15 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		}
 		go func() {
 			log.Printf("%s API on %s", aud, addr)
 			if err := s.ListenAndServe(); err != http.ErrServerClosed {

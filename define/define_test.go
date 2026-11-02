@@ -34,6 +34,8 @@ func (s src) Visible(min string) bool { return min == "" || s.aud[min] }
 type Address struct {
 	City string `api:"city"`
 	Zip  string `api:"zip,optional"`
+	// Code は internal にだけ見える必須フィールド。見えない呼び出し元には求めない。
+	Code string `api:"code,min=internal"`
 }
 
 type In struct {
@@ -74,6 +76,10 @@ func TestDecodeErrors(t *testing.T) {
 		"nested missing":      {path: map[string]string{"id": "x"}, body: `{"tags":[],"at":"2026-11-02T00:00:00Z","address":{}}`},
 		"invisible field set": {path: map[string]string{"id": "x"}, body: `{"tags":[],"at":"2026-11-02T00:00:00Z","address":{"city":"a"},"secret":"s"}`},
 		"bad time":            {path: map[string]string{"id": "x"}, body: `{"tags":[],"at":"yesterday","address":{"city":"a"}}`},
+		"nested invisible":    {path: map[string]string{"id": "x"}, body: `{"tags":[],"at":"2026-11-02T00:00:00Z","address":{"city":"a","code":"c"}}`},
+		"null required":       {path: map[string]string{"id": "x"}, body: `{"tags":null,"at":"2026-11-02T00:00:00Z","address":{"city":"a"}}`},
+		"null element":        {path: map[string]string{"id": "x"}, body: `{"tags":[null],"at":"2026-11-02T00:00:00Z","address":{"city":"a"}}`},
+		"null nested":         {path: map[string]string{"id": "x"}, body: `{"tags":[],"at":"2026-11-02T00:00:00Z","address":{"city":null}}`},
 	}
 	for name, s := range cases {
 		_, err := op.Decode(s)
@@ -83,9 +89,14 @@ func TestDecodeErrors(t *testing.T) {
 		}
 	}
 	// internal には secret が見える。
-	ok := src{path: map[string]string{"id": "x"}, body: `{"tags":[],"at":"2026-11-02T00:00:00Z","address":{"city":"a"},"secret":"s"}`, aud: map[string]bool{"internal": true}}
+	ok := src{path: map[string]string{"id": "x"}, body: `{"tags":[],"at":"2026-11-02T00:00:00Z","address":{"city":"a","code":"c"},"secret":"s"}`, aud: map[string]bool{"internal": true}}
 	if _, err := op.Decode(ok); err != nil {
 		t.Errorf("internal: %v", err)
+	}
+	// internal には code も必須。
+	missing := src{path: map[string]string{"id": "x"}, body: `{"tags":[],"at":"2026-11-02T00:00:00Z","address":{"city":"a"}}`, aud: map[string]bool{"internal": true}}
+	if _, err := op.Decode(missing); err == nil {
+		t.Error("internal without code: want an error")
 	}
 }
 
@@ -122,6 +133,10 @@ type recursive struct {
 	Child *recursive `api:"child"`
 }
 
+type withUint struct {
+	N uint64 `api:"n"`
+}
+
 type badOption struct {
 	X string `api:"x,sometimes"`
 }
@@ -131,7 +146,8 @@ func TestUnsupportedTypesAreErrors(t *testing.T) {
 	h2 := define.Query[struct{}, recursive]("b.get").Handle(func(context.Context, struct{}) (recursive, error) { return recursive{}, nil })
 	h3 := define.Query[badOption, string]("c.get").Handle(func(context.Context, badOption) (string, error) { return "", nil })
 	h4 := define.Query[string, string]("d.get").Handle(func(context.Context, string) (string, error) { return "", nil })
-	for _, op := range []define.Operation{h1, h2, h3, h4} {
+	h5 := define.Query[withUint, string]("e.get").Handle(func(context.Context, withUint) (string, error) { return "", nil })
+	for _, op := range []define.Operation{h1, h2, h3, h4, h5} {
 		if _, err := op.Spec(); err == nil {
 			s, _ := op.Spec()
 			t.Errorf("%s: want an error", s.Name)

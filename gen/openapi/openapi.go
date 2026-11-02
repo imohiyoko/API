@@ -131,6 +131,8 @@ func operation(op *manifest.Operation, method string, visible func(string) bool)
 	if len(op.Input.Fields) > 0 {
 		responses["400"] = errRef
 	}
+	// ハンドラーが返す not_found や conflict など、操作ごとには分からない誤り。
+	responses["default"] = errRef
 	o["responses"] = responses
 	if op.Anonymous {
 		o["security"] = []obj{{}, {"bearer": []string{}}}

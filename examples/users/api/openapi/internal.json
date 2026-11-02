@@ -44,7 +44,7 @@
   },
   "info": {
     "description": "Audience: internal. Generated from the API manifest; do not edit.",
-    "title": "Users",
+    "title": "API",
     "version": "0.0.0"
   },
   "openapi": "3.1.0",
@@ -111,6 +111,9 @@
             "$ref": "#/components/responses/Error"
           },
           "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
             "$ref": "#/components/responses/Error"
           }
         },
@@ -196,6 +199,9 @@
           },
           "503": {
             "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
           }
         },
         "security": [
@@ -245,6 +251,9 @@
             "$ref": "#/components/responses/Error"
           },
           "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
             "$ref": "#/components/responses/Error"
           }
         },
@@ -313,6 +322,9 @@
             "$ref": "#/components/responses/Error"
           },
           "503": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
             "$ref": "#/components/responses/Error"
           }
         },

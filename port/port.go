@@ -4,6 +4,8 @@ package port
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 )
 
 // 主体の種類。iam の principal_type と同じ。
@@ -23,6 +25,19 @@ type Principal struct {
 	SID string
 	// Token は認証に使ったトークン。認可で iam に認証の文脈を組み立てさせるために渡す（design.md 6章）。ログに出さない。
 	Token string `json:"-"`
+}
+
+// String は Token を伏せた表現を返す（%v や %+v でトークンを出さない）。
+func (p Principal) String() string {
+	return fmt.Sprintf("{Type:%s ID:%s OrgID:%s SID:%s}", p.Type, p.ID, p.OrgID, p.SID)
+}
+
+// LogValue は slog に Token を出さない。
+func (p Principal) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("type", p.Type), slog.String("id", p.ID),
+		slog.String("org_id", p.OrgID), slog.String("sid", p.SID),
+	)
 }
 
 // ErrUnauthenticated は、認証情報が無い・使えないことを表す。

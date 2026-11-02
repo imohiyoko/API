@@ -104,7 +104,7 @@ func check(m *manifest.Manifest, strict bool, w io.Writer) int {
 	return 0
 }
 
-// Generate は dir に manifest.json と openapi/<audience>.json を書く。REST に何も出さない公開範囲の文書は作らない。
+// Generate は dir に manifest.json と openapi/<audience>.json を書く。REST に何も出さない公開範囲の文書は作らず、以前のものがあれば消す。
 func Generate(m *manifest.Manifest, dir string, info openapi.Info) error {
 	if err := os.MkdirAll(filepath.Join(dir, "openapi"), 0o755); err != nil {
 		return err
@@ -117,14 +117,19 @@ func Generate(m *manifest.Manifest, dir string, info openapi.Info) error {
 		return err
 	}
 	for _, aud := range m.AudienceList() {
+		path := filepath.Join(dir, "openapi", aud+".json")
 		if !exposesREST(m, aud) {
+			// 以前の gen の文書が残ると、出さなくなった操作が契約に載ったままになる。
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
 			continue
 		}
 		doc, err := openapi.Generate(m, aud, info)
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(filepath.Join(dir, "openapi", aud+".json"), doc, 0o644); err != nil {
+		if err := os.WriteFile(path, doc, 0o644); err != nil {
 			return err
 		}
 	}
