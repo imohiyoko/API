@@ -19,7 +19,7 @@ const purgeEvery = time.Second
 // MemoryRateLimiter はプロセス内のトークンバケット。期間あたり Requests 回まで、続けて Requests 回まで呼べる。
 // プロセスごとに数えるので、複数のプロセスで動かすと上限はプロセスの数だけ増える。
 type MemoryRateLimiter struct {
-	now     func() time.Time
+	now       func() time.Time
 	mu        sync.Mutex
 	buckets   map[string]*bucket
 	lastPurge time.Time
