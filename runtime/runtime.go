@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/imohiyoko/API/define"
+	"github.com/imohiyoko/API/gen/proto"
 	"github.com/imohiyoko/API/manifest"
 	"github.com/imohiyoko/API/port"
 )
@@ -32,13 +33,16 @@ type AudienceConfig struct {
 	// RequireOrg は、Org に属する主体だけを受けるか（partner の既定）。
 	RequireOrg bool
 	Disclosure Disclosure
+	// GRPCReflection は、gRPC の口にサーバーリフレクションを載せるか（internal の既定）。
+	// 載せると、契約（.proto）を持たない呼び出し元にも、その公開範囲の操作と型が見える。
+	GRPCReflection bool
 }
 
 // DefaultAudienceConfig は既定の公開範囲の既定の設定。独自の公開範囲は、すべての主体を受け、コードだけを見せる。
 func DefaultAudienceConfig(audience string) AudienceConfig {
 	switch audience {
 	case manifest.Internal:
-		return AudienceConfig{Principals: []string{port.PrincipalServiceAccount}, Disclosure: DiscloseDetail}
+		return AudienceConfig{Principals: []string{port.PrincipalServiceAccount}, Disclosure: DiscloseDetail, GRPCReflection: true}
 	case manifest.Partner:
 		return AudienceConfig{Principals: []string{port.PrincipalServiceAccount}, RequireOrg: true, Disclosure: DiscloseReasons}
 	case manifest.Public:
@@ -58,9 +62,11 @@ type Config struct {
 
 // Server は公開範囲ごとの口を持つ。
 type Server struct {
-	manifest *manifest.Manifest
-	warnings []manifest.Diagnostic
-	handlers map[string]http.Handler
+	manifest  *manifest.Manifest
+	warnings  []manifest.Diagnostic
+	handlers  map[string]http.Handler
+	grpc      map[string]*grpcAudience
+	audiences map[string]AudienceConfig
 }
 
 // Build は定義を検査し（design.md 4.3）、公開範囲ごとの口を組み立てる。エラーがあれば起動を拒む。
@@ -79,7 +85,7 @@ func Build(reg *define.Registry, cfg Config) (*Server, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	s := &Server{manifest: m, handlers: map[string]http.Handler{}}
+	s := &Server{manifest: m, handlers: map[string]http.Handler{}, grpc: map[string]*grpcAudience{}, audiences: map[string]AudienceConfig{}}
 	for _, d := range ds {
 		s.warnings = append(s.warnings, d)
 		cfg.Logger.Warn("api definition", "diagnostic", d.String())
@@ -97,12 +103,22 @@ func Build(reg *define.Registry, cfg Config) (*Server, error) {
 		if len(ac.Principals) == 0 {
 			ac.Principals = DefaultAudienceConfig(aud).Principals
 		}
+		s.audiences[aud] = ac
 		s.handlers[aud] = newRESTHandler(m, aud, ac, ops, cfg)
+		if proto.Exposes(m, aud) {
+			ga, err := buildGRPC(m, aud, func(spec *manifest.Operation) *opCall {
+				return &opCall{m: m, aud: aud, ac: ac, spec: spec, op: ops[spec.Name], cfg: cfg}
+			})
+			if err != nil {
+				return nil, err
+			}
+			s.grpc[aud] = ga
+		}
 	}
 	return s, nil
 }
 
-// Handler は公開範囲の口。知らない公開範囲なら、すべて 404 を返す。
+// Handler は公開範囲の REST の口。知らない公開範囲なら、すべて 404 を返す。
 // 公開範囲ごとに別の listener で出す（design.md 4.1、ADR 0005）。
 func (s *Server) Handler(audience string) http.Handler {
 	if h, ok := s.handlers[audience]; ok {

@@ -66,7 +66,7 @@ func Registry(s *Store) *define.Registry {
 	list := define.Query[ListUsersIn, []User]("users.list",
 		define.Doc("ユーザーの一覧"),
 		define.Authz("users:list"),
-		define.Expose(define.Internal, define.REST),
+		define.Expose(define.Internal, define.REST, define.GRPC),
 		define.Expose(define.Partner, define.REST),
 	).Handle(func(_ context.Context, in ListUsersIn) ([]User, error) {
 		s.mu.Lock()
@@ -81,7 +81,7 @@ func Registry(s *Store) *define.Registry {
 	create := define.Command[CreateUserIn, User]("users.create",
 		define.Doc("ユーザーを作る"),
 		define.Authz("users:create"),
-		define.Expose(define.Internal, define.REST),
+		define.Expose(define.Internal, define.REST, define.GRPC),
 	).Handle(func(_ context.Context, in CreateUserIn) (User, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -94,7 +94,7 @@ func Registry(s *Store) *define.Registry {
 	del := define.Command[DeleteUserIn, Deleted]("users.delete",
 		define.Doc("ユーザーを消す"),
 		define.Authz("users:delete", define.Resource("user", "id")),
-		define.Expose(define.Internal, define.REST),
+		define.Expose(define.Internal, define.REST, define.GRPC),
 	).Handle(func(_ context.Context, in DeleteUserIn) (Deleted, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -107,5 +107,5 @@ func Registry(s *Store) *define.Registry {
 		return Deleted{}, define.Errorf(define.CodeNotFound, "user %s", in.ID)
 	})
 
-	return define.NewRegistry().Add(get, list, create, del)
+	return define.NewRegistry(define.WithName("users")).Add(get, list, create, del)
 }

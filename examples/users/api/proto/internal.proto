@@ -1,0 +1,63 @@
+// Code generated from the API manifest; DO NOT EDIT.
+// Audience: internal.
+
+syntax = "proto3";
+
+package users.internal;
+
+service Users {
+  // ユーザーを取得する
+  rpc Get(UsersGetRequest) returns (UsersGetResponse);
+  // ユーザーの一覧
+  rpc List(UsersListRequest) returns (UsersListResponse);
+  // ユーザーを作る
+  rpc Create(UsersCreateRequest) returns (UsersCreateResponse);
+  // ユーザーを消す
+  rpc Delete(UsersDeleteRequest) returns (UsersDeleteResponse);
+}
+
+message UsersGetRequest {
+  string id = 1;
+}
+
+message UsersGetResponse {
+  string id = 1;
+  string name = 2;
+  string email = 3;
+  string note = 4;
+}
+
+message UsersListRequest {
+  optional int64 limit = 1;
+}
+
+message UsersListResponse {
+  repeated Value value = 1;
+
+  message Value {
+    string id = 1;
+    string name = 2;
+    string email = 3;
+    string note = 4;
+  }
+}
+
+message UsersCreateRequest {
+  string name = 1;
+  string email = 2;
+  optional string note = 3;
+}
+
+message UsersCreateResponse {
+  string id = 1;
+  string name = 2;
+  string email = 3;
+  string note = 4;
+}
+
+message UsersDeleteRequest {
+  string id = 1;
+}
+
+message UsersDeleteResponse {
+}

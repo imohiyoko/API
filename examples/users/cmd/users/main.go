@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -78,6 +79,25 @@ func main() {
 			}
 		}()
 		go func() { <-ctx.Done(); _ = s.Close() }()
+	}
+	// gRPC の口（design.md 5.2）。gRPC で出す操作がある公開範囲だけ。internal はリフレクションも載る。
+	grpcAddrs := map[string]string{"internal": "127.0.0.1:9090", "partner": ":9091", "public": ":9092"}
+	for aud, addr := range grpcAddrs {
+		gs, err := srv.GRPCServer(aud)
+		if err != nil {
+			continue
+		}
+		lis, err := net.Listen("tcp", addr)
+		if err != nil {
+			log.Fatal(err)
+		}
+		go func() {
+			log.Printf("%s gRPC on %s", aud, addr)
+			if err := gs.Serve(lis); err != nil {
+				log.Fatal(err)
+			}
+		}()
+		go func() { <-ctx.Done(); gs.Stop() }()
 	}
 	<-ctx.Done()
 }

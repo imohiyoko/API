@@ -9,6 +9,7 @@ import (
 
 // Registry は操作を集める。
 type Registry struct {
+	name      string
 	audiences []string
 	ops       []Operation
 }
@@ -19,6 +20,11 @@ type RegistryOption func(*Registry)
 // WithAudiences は公開範囲を広い順に置き換える（独自の公開範囲。design.md 4.1）。
 func WithAudiences(audiences ...string) RegistryOption {
 	return func(r *Registry) { r.audiences = audiences }
+}
+
+// WithName は API の名前（manifest.Manifest.Name）。gRPC のパッケージ名の頭になる。
+func WithName(name string) RegistryOption {
+	return func(r *Registry) { r.name = name }
 }
 
 // NewRegistry は空の Registry を作る。
@@ -42,7 +48,7 @@ func (r *Registry) Operations() []Operation { return r.ops }
 // Manifest はマニフェストを書き出す。定義の誤り（型の対応が無い、ハンドラーが無いなど）は error。
 // 公開の規則の検査は manifest.Check で行う。
 func (r *Registry) Manifest() (*manifest.Manifest, error) {
-	m := &manifest.Manifest{Version: manifest.Version, Audiences: r.audiences, Operations: []manifest.Operation{}}
+	m := &manifest.Manifest{Version: manifest.Version, Name: r.name, Audiences: r.audiences, Operations: []manifest.Operation{}}
 	var errs []error
 	for _, op := range r.ops {
 		spec, err := op.Spec()

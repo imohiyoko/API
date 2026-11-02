@@ -43,12 +43,15 @@ const (
 // Protocols は知っているプロトコルの一覧。
 var Protocols = []string{REST, GRPC, GraphQL, SOAP, WebSocket, Webhook}
 
-// Implemented はこの版で実行と生成ができるプロトコル（roadmap.md M1）。
-var Implemented = map[string]bool{REST: true}
+// Implemented はこの版で実行と生成ができるプロトコル（roadmap.md）。gRPC は Query と Command だけ（GRPCServes）。
+var Implemented = map[string]bool{REST: true, GRPC: true}
 
 // Manifest は API 全体の定義。
 type Manifest struct {
 	Version string `json:"version"`
+	// Name は API の名前（`users` や `acme.billing` のような、小文字の語をドットでつないだもの）。
+	// gRPC のパッケージ名の頭に使う（例：users → users.internal）。空なら api。
+	Name string `json:"name,omitempty"`
 	// Audiences は公開範囲を広い順に並べたもの。空なら DefaultAudiences。
 	Audiences  []string    `json:"audiences,omitempty"`
 	Operations []Operation `json:"operations"`
@@ -109,6 +112,14 @@ type Field struct {
 }
 
 // AudienceList は公開範囲を広い順に返す。
+// APIName は Name、空なら api。
+func (m *Manifest) APIName() string {
+	if m.Name == "" {
+		return "api"
+	}
+	return m.Name
+}
+
 func (m *Manifest) AudienceList() []string {
 	if len(m.Audiences) == 0 {
 		return DefaultAudiences

@@ -11,7 +11,6 @@ import (
 
 	"github.com/imohiyoko/API/define"
 	"github.com/imohiyoko/API/manifest"
-	"github.com/imohiyoko/API/port"
 )
 
 // maxBody は本文の上限。
@@ -25,19 +24,14 @@ func newRESTHandler(m *manifest.Manifest, aud string, ac AudienceConfig, ops map
 			continue
 		}
 		method, path, _ := spec.ResolveHTTP() // Check 済み
-		h := &restOp{m: m, aud: aud, ac: ac, spec: spec, op: ops[spec.Name], cfg: cfg}
+		h := &restOp{opCall{m: m, aud: aud, ac: ac, spec: spec, op: ops[spec.Name], cfg: cfg}}
 		mux.Handle(method+" "+path, h)
 	}
 	return mux
 }
 
 type restOp struct {
-	m    *manifest.Manifest
-	aud  string
-	ac   AudienceConfig
-	spec *manifest.Operation
-	op   define.Operation
-	cfg  Config
+	opCall
 }
 
 func (h *restOp) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -47,68 +41,13 @@ func (h *restOp) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, define.Errorf(define.CodeInternal, "handler panicked"))
 		}
 	}()
-	out, err := h.serve(r)
-	if err != nil {
-		h.writeError(w, err)
-		return
-	}
-	body, err := define.Encode(out, func(min string) bool { return h.m.Visible(min, h.aud) })
+	token, hasToken := bearer(r.Header.Get("Authorization"))
+	body, err := h.run(r.Context(), token, hasToken, &restSource{r: r, m: h.m, aud: h.aud, needBody: hasBody(h.spec)})
 	if err != nil {
 		h.writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, body)
-}
-
-func (h *restOp) serve(r *http.Request) (any, error) {
-	ctx := define.WithAudience(r.Context(), h.aud)
-
-	// 認証。Anonymous でも、トークンが付いていれば確かめる。
-	token, hasToken := bearer(r)
-	var principal *port.Principal
-	if hasToken {
-		p, err := h.cfg.Authenticator.Authenticate(ctx, token)
-		if errors.Is(err, port.ErrUnauthenticated) {
-			return nil, &define.Error{Code: define.CodeUnauthenticated}
-		}
-		if err != nil {
-			return nil, h.unavailable("authenticate", err)
-		}
-		if !slices.Contains(h.ac.Principals, p.Type) || (h.ac.RequireOrg && p.OrgID == "") {
-			// この口で受けない主体（例：internal の口にユーザーのトークン）。
-			return nil, &define.Error{Code: define.CodePermissionDenied, Reasons: []string{"principal_not_allowed"}}
-		}
-		principal = &p
-		ctx = define.WithPrincipal(ctx, p)
-	} else if !h.spec.Anonymous {
-		return nil, &define.Error{Code: define.CodeUnauthenticated}
-	}
-
-	in, err := h.op.Decode(&restSource{r: r, m: h.m, aud: h.aud, needBody: hasBody(h.spec)})
-	if err != nil {
-		return nil, err
-	}
-
-	// 認可（iam の authz:check）。
-	if a := h.spec.Authz; a != nil {
-		req := port.CheckRequest{Principal: *principal, Action: a.Action, ResourceType: a.ResourceType}
-		if a.ResourceField != "" {
-			req.ResourceID = h.op.ResourceID(in, a.ResourceField)
-		}
-		d, err := h.cfg.Authorizer.Check(ctx, req)
-		if err != nil {
-			return nil, h.unavailable("authorize", err)
-		}
-		if !d.Allowed {
-			return nil, &define.Error{Code: define.CodePermissionDenied, Reasons: d.Reasons}
-		}
-	}
-	return h.op.Call(ctx, in)
-}
-
-func (h *restOp) unavailable(step string, err error) error {
-	h.cfg.Logger.Error("api dependency failed", "operation", h.spec.Name, "step", step, "error", err)
-	return define.Errorf(define.CodeUnavailable, "%s failed", step)
 }
 
 // errorBody は REST のエラーの本文。見せる中身は公開範囲の Disclosure で決まる。
@@ -119,23 +58,12 @@ type errorBody struct {
 }
 
 func (h *restOp) writeError(w http.ResponseWriter, err error) {
-	var e *define.Error
-	if !errors.As(err, &e) {
-		h.cfg.Logger.Error("api handler error", "operation", h.spec.Name, "error", err)
-		e = &define.Error{Code: define.CodeInternal}
-	}
-	b := errorBody{Error: string(e.Code)}
-	if h.ac.Disclosure >= DiscloseReasons {
-		b.Reasons = e.Reasons
-	}
-	// 入力の誤りは、どの公開範囲でも直し方が分かるようにメッセージを見せる。
-	if h.ac.Disclosure >= DiscloseDetail || e.Code == define.CodeInvalidArgument {
-		b.Message = e.Message
-	}
+	e := h.failure(err)
+	msg, reasons := h.disclose(e)
 	if e.Code == define.CodeUnauthenticated {
 		w.Header().Set("WWW-Authenticate", "Bearer")
 	}
-	writeJSON(w, define.HTTPStatus(e.Code), b)
+	writeJSON(w, define.HTTPStatus(e.Code), errorBody{Error: string(e.Code), Message: msg, Reasons: reasons})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -144,8 +72,8 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func bearer(r *http.Request) (string, bool) {
-	h := r.Header.Get("Authorization")
+// bearer は Authorization の値から Bearer のトークンを取り出す。
+func bearer(h string) (string, bool) {
 	scheme, token, ok := strings.Cut(h, " ")
 	if !ok || !strings.EqualFold(scheme, "Bearer") || token == "" {
 		return "", false

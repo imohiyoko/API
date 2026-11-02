@@ -49,9 +49,10 @@ Go の定義 ──書き出し──▶ マニフェスト（JSON / YAML。言�
 ```
 api/
 ├── define/      # 定義の DSL（Go）、入力の組み立てと出力の絞り込み
-├── manifest/    # マニフェストの型、読み書き、検査（4.3）、REST の規則（5.1）
-├── runtime/     # 共通の層（検証・認証・認可・エラーの開示）と公開範囲ごとの口。プロトコルは今は REST だけ
-├── gen/         # 契約ファイルの生成（openapi/。今後 proto/ sdl/ asyncapi/）
+├── manifest/    # マニフェストの型、読み書き、検査（4.3）、REST・gRPC の規則（5.1）
+├── runtime/     # 共通の層（検証・認証・認可・エラーの開示）と公開範囲ごとの口（REST・gRPC）
+├── gen/         # 契約ファイルの生成（openapi/ proto/。今後 sdl/ asyncapi/）
+├── scripts/     # E2E（e2e-grpc.sh）
 ├── port/        # Authenticator・Authorizer など外部依存のポート
 ├── adapters/    # iam/ memory/
 ├── cli/         # check・manifest・gen（利用者の main から cli.Main(registry, args) で呼ぶ）
@@ -62,7 +63,7 @@ api/
 ```
 
 - コア（`define`・`manifest`・`runtime`・`port`・`gen`・`cli`）は `adapters/` を import しない（`internal/archtest` で検査）
-- Go 1.24 以上。M1 は標準ライブラリだけで動く
+- Go 1.26 以上（grpc-go が求める版）。依存は grpc-go・protobuf だけ。REST だけを使う利用者も、この2つをビルドに含む
 - プロトコルとアダプタは、使うものだけをビルドに含められるよう別パッケージにする
 
 ## 3. 定義
@@ -96,8 +97,9 @@ type User struct {
 }
 ```
 
-- 定義はレジストリに集め、`runtime.Build(registry, config)` が公開範囲ごとの `http.Handler`（今後 gRPC サーバーも）を返す
-- 利用者の main から `cli.Main(registry, args)` を呼ぶと、`check`・`manifest`・`gen` が使える。`gen` は `manifest.json` と公開範囲ごとの `openapi/<公開範囲>.json` を書き出す。`cmd/api` は同じことをマニフェストのファイルから行う
+- 定義はレジストリに集め、`runtime.Build(registry, config)` が公開範囲ごとの口を作る。`Server.Handler(公開範囲)` が REST の `http.Handler`、`Server.GRPCServer(公開範囲)` が gRPC の `*grpc.Server`
+- レジストリには API の名前を付けられる（`define.NewRegistry(define.WithName("users"))`、マニフェストの `name`）。gRPC のパッケージ名は「API の名前.公開範囲」（例：`users.internal`）。省略すると `api`
+- 利用者の main から `cli.Main(registry, args)` を呼ぶと、`check`・`manifest`・`gen` が使える。`gen` は `manifest.json` と、公開範囲ごとの `openapi/<公開範囲>.json`（REST）・`proto/<公開範囲>.proto`（gRPC）を書き出す。そのプロトコルで何も出さない公開範囲のファイルは作らず、前に作ったものは消す。`cmd/api` は同じことをマニフェストのファイルから行う
 
 ### 3.1 フィールドのタグ
 
@@ -155,12 +157,13 @@ API に出すフィールドには `api` タグを付ける。タグの無いフ
 - 名前の形、公開範囲・プロトコルの名前、入力の場所の誤り（Query の body など）、`Authz` と `Anonymous` の併用、`Authz` のリソースのフィールドが入力に無い
 - public に出すのに `Authz` も `Anonymous` も無い
 - REST に出す Command の HTTP メソッドが決まらない（5.1）
-- 同じ公開範囲・プロトコルの中で、パス・メソッド名・フィールド名がぶつかる
+- 同じ公開範囲・プロトコルの中で、パス・メソッド名・メッセージ名・フィールド名がぶつかる
+- gRPC に出す操作の、protobuf で表せない型（配列の配列）や名前（protobuf の識別子でないフィールド名）
 
 警告：
 
 - フィールドの `min` が、操作を出すどの公開範囲よりも狭い（どこにも見えないフィールドになる）
-- まだ実装していないプロトコルへの公開（その公開は無視する）
+- まだ実装していないプロトコルへの公開（その公開は無視する）。gRPC の Stream・Event もまだ（M5）
 
 `Authz` も `Anonymous` も無い操作を public 以外に出すと、その口で受ける主体なら誰でも呼べる。public の検査は、公開範囲の並びの最も狭いものに対して行う。
 
@@ -177,6 +180,7 @@ API に出すフィールドには `api` タグを付ける。タグの無いフ
 
 - SSE は独立したプロトコルではなく、REST の Stream の実装として扱う（M5 で足す）
 - REST のパスは `define.HTTP` で指定する。省略したときは名前の語を `/` でつなぎ（最後の語が get・list・create・replace・update・delete なら落とす）、path のフィールドを `/{name}` で足す。例：`users.get` → `GET /users/{id}`、`users.list` → `GET /users`
+- gRPC のサービス名とメソッド名は、操作の名前の最後の語をメソッド、それより前の語をサービスにして PascalCase にする。例：`users.get` → `Users/Get`、`orgs.members.list` → `OrgsMembers/List`。語が1つなら、サービスは `Default`。要求・応答のメッセージは `UsersGetRequest`・`UsersGetResponse`
 - REST の Command の HTTP メソッドは、`define.HTTP` で指定する。省略したときは操作の名前の最後の語で決める：`create` → POST、`replace` → PUT、`update` → PATCH、`delete` → DELETE。どれにも当たらなければエラー（4.3）。冪等性は PUT・DELETE だけを冪等として契約に書く
 
 ### 5.2 実装と契約
@@ -193,6 +197,18 @@ API に出すフィールドには `api` タグを付ける。タグの無いフ
 - Webhook は送る側なので、配信先の登録・一覧・削除の操作も自動で作り、その Event と同じ公開範囲に出す
   - これらの操作は Event の `Anonymous` を継承しない。権限 `webhooks:manage` の `Authz` を持ち、配信先は登録した主体の Org（Org が無ければ主体）をリソースとして検査する。ほかの Org の配信先は見えない
 - 入力の検証・認証・認可・レートリミット・監査ログは、プロトコルに入る前の共通の層（`runtime`）で行う
+
+#### gRPC
+
+- `.proto` と実際の口は、同じ記述子（`gen/proto`）から作るので食い違わない。生成コードは要らず、要求・応答は `dynamicpb` で組み立てる
+- 入力の場所（path・query・body）は gRPC には無いので、すべてのフィールドを要求のメッセージに入れる
+- 型：文字列 → `string`、真偽値 → `bool`、整数 → `int32`・`int64`、浮動小数点数 → `float`・`double`、`time.Time` → `google.protobuf.Timestamp`、`[]byte` → `bytes`、スライス → `repeated`、struct → 入れ子のメッセージ（名前はフィールド名の PascalCase）。省略できるスカラーは proto3 の `optional`
+- オブジェクトでない出力（一覧など）は、応答のメッセージの `value` に包む
+- フィールドの番号は、定義の中のフィールドの順番（1から）。公開範囲で見えないフィールドを除いても番号は変わらないので、公開範囲ごとの `.proto` の間でも同じ番号になる。フィールドの順番を変える・途中に足すと互換性が壊れる（足すときは最後に足す）
+- `json_name` はフィールド名と同じにする。grpcurl や JSON 変換でも REST と同じ名前になる
+- proto3 では、スカラーが「無い」ことと「ゼロ値」を区別できない。gRPC では、必須のスカラーはゼロ値として受ける（REST なら required のエラーになる入力も通る）。区別したいフィールドは省略できる（optional）ものにする
+- 認証は metadata の `authorization: Bearer <token>`。エラーの対応は invalid_argument → `INVALID_ARGUMENT`、unauthenticated → `UNAUTHENTICATED`、permission_denied → `PERMISSION_DENIED`、not_found → `NOT_FOUND`、conflict → `ALREADY_EXISTS`、failed_precondition → `FAILED_PRECONDITION`、unavailable → `UNAVAILABLE`、internal → `INTERNAL`。見せる中身は REST と同じ開示のルール（4.1）で、メッセージは status の message、コードは `google.rpc.ErrorInfo` の reason、拒否の理由は ErrorInfo の metadata `reasons`（カンマ区切り）に入れる
+- サーバーリフレクションは internal だけ既定で載せる（`AudienceConfig.GRPCReflection`）。載せると、契約を持たない呼び出し元にも操作と型が見えるため
 
 ## 6. 認証と認可（iam）
 

@@ -53,8 +53,28 @@ func TestCheckReportsEveryRule(t *testing.T) {
 			o.Output = manifest.Schema{Type: "object", Fields: []manifest.Field{{Name: "secret", Min: "internal", Schema: str()}}}
 		})}, manifest.Warning, "not visible on any audience"},
 		{"not implemented", []manifest.Operation{op("a.get", "query", func(o *manifest.Operation) {
-			o.Expose[0].Protocols = []string{"grpc"}
+			o.Expose[0].Protocols = []string{"graphql"}
 		})}, manifest.Warning, "not implemented yet"},
+		{"grpc stream not implemented", []manifest.Operation{op("a.watch", "stream", func(o *manifest.Operation) {
+			o.Expose[0].Protocols = []string{"grpc"}
+		})}, manifest.Warning, "gRPC for a stream is not implemented yet"},
+		{"grpc name conflict", []manifest.Operation{
+			op("a_b.c", "query", func(o *manifest.Operation) { o.Expose[0].Protocols = []string{"grpc"} }),
+			op("a.b_c", "query", func(o *manifest.Operation) { o.Expose[0].Protocols = []string{"grpc"} }),
+		}, manifest.Error, "conflicts with a_b.c"},
+		{"grpc service vs message", []manifest.Operation{
+			op("users_request.get", "query", func(o *manifest.Operation) { o.Expose[0].Protocols = []string{"grpc"} }),
+			op("users", "query", func(o *manifest.Operation) { o.Expose[0].Protocols = []string{"grpc"} }),
+		}, manifest.Error, "UsersRequest on public conflicts with users_request.get"},
+		{"grpc array of arrays", []manifest.Operation{op("a.get", "query", func(o *manifest.Operation) {
+			o.Expose[0].Protocols = []string{"grpc"}
+			inner := manifest.Schema{Type: "array", Items: &manifest.Schema{Type: "string"}}
+			o.Output = manifest.Schema{Type: "array", Items: &inner}
+		})}, manifest.Error, "array of arrays"},
+		{"grpc field name", []manifest.Operation{op("a.get", "query", func(o *manifest.Operation) {
+			o.Expose[0].Protocols = []string{"grpc"}
+			o.Output = manifest.Schema{Type: "object", Fields: []manifest.Field{{Name: "my-field", Schema: str()}}}
+		})}, manifest.Error, "not a valid protobuf name"},
 		{"bad name", []manifest.Operation{op("A.Get", "query", nil)}, manifest.Error, "invalid operation name"},
 		{"unknown audience", []manifest.Operation{op("a.get", "query", func(o *manifest.Operation) {
 			o.Expose[0].Audience = "galaxy"
