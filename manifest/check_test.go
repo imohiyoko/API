@@ -36,6 +36,14 @@ func TestCheckReportsEveryRule(t *testing.T) {
 		})}, manifest.Error, "cannot be exposed over webhook"},
 		{"public without authz", []manifest.Operation{op("a.get", "query", func(o *manifest.Operation) { o.Authz = nil })},
 			manifest.Error, "without Authz or Anonymous"},
+		{"partner without authz", []manifest.Operation{op("a.get", "query", func(o *manifest.Operation) {
+			o.Authz = nil
+			o.Expose[0].Audience = "partner"
+		})}, manifest.Error, "exposed to partner without Authz or Anonymous"},
+		{"internal without authz", []manifest.Operation{op("a.get", "query", func(o *manifest.Operation) {
+			o.Authz = nil
+			o.Expose[0].Audience = "internal"
+		})}, manifest.Error, "exposed to internal without Authz or Anonymous"},
 		{"command method", []manifest.Operation{op("a.archive", "command", nil)}, manifest.Error, "cannot decide the HTTP method"},
 		{"route conflict", []manifest.Operation{op("a.get", "query", nil), op("b.get", "query", func(o *manifest.Operation) {
 			o.HTTP = &manifest.HTTP{Path: "/a"}

@@ -64,7 +64,6 @@ func Check(m *Manifest) []Diagnostic {
 		}
 		seenAud[a] = true
 	}
-	narrowest := auds[len(auds)-1]
 	if m.Name != "" && !nameRe.MatchString(m.Name) {
 		add(Error, "", "invalid API name %q", m.Name)
 	}
@@ -109,7 +108,8 @@ func Check(m *Manifest) []Diagnostic {
 				continue
 			}
 			exposedTo[e.Audience] = true
-			if e.Audience == narrowest && op.Authz == nil && !op.Anonymous {
+			if op.Authz == nil && !op.Anonymous {
+				// どの公開範囲でも、認可の書き忘れは起動を拒む（ADR 0005）。認可が要らない操作は Anonymous を明示する。
 				add(Error, n, "exposed to %s without Authz or Anonymous", e.Audience)
 			}
 			for _, p := range e.Protocols {
