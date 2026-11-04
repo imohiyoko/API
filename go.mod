@@ -2,6 +2,8 @@ module github.com/imohiyoko/API
 
 go 1.26.0
 
+toolchain go1.27.3
+
 require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261026165753-2ffab32bce7e
 	google.golang.org/grpc v1.85.0
@@ -9,7 +11,7 @@ require (
 )
 
 require (
-	golang.org/x/net v0.60.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 )
