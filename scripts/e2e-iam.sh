@@ -80,8 +80,15 @@ IAM_PUBLIC_URL=$public IAM_ADMIN_URL=$admin \
   IAM_ADMIN_TOKEN=$owner IAM_RESOURCE_INTERNAL=https://users.internal IAM_RESOURCE_PUBLIC=https://users.example \
   ./users serve >users.log 2>&1 &
 api_pid=$!
-for _ in $(seq 100); do grep -qs "internal gRPC on" users.log && break; kill -0 "$api_pid" 2>/dev/null || break; sleep 0.1; done
-grep -q "internal gRPC on" users.log || { echo "FAIL: the server did not start"; cat users.log; exit 1; }
+# HTTP の口は別の goroutine で待ち受けるので、ログではなく internal と public の両方に繋がるまで待つ。
+up() { curl -s -o /dev/null "http://127.0.0.1:8090/users" && curl -s -o /dev/null "http://127.0.0.1:8092/users"; }
+ready=
+for _ in $(seq 100); do
+  if up; then ready=1; break; fi
+  kill -0 "$api_pid" 2>/dev/null || break
+  sleep 0.1
+done
+[ -n "$ready" ] || { echo "FAIL: the server did not start"; cat users.log; exit 1; }
 
 expect() { # name want-status method url token [body]
   local got args=(-s -o "$work/body" -w '%{http_code}' -X "$3" -H "Authorization: Bearer $5" -H 'Content-Type: application/json')
