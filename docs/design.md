@@ -53,7 +53,7 @@ api -manifest api/manifest.yaml sidecar -upstream http://127.0.0.1:3000 \
 
 - マニフェスト（JSON か YAML）の操作を、ライブラリと同じ `runtime` で動かす。認証・認可・レートリミット・入力の検証・フィールドの絞り込み・エラーの開示・REST と gRPC はライブラリと同じ実装なので、挙動も同じ（`scripts/e2e-sidecar.sh` で、Node.js の本体と Go のライブラリの応答が一致することを確かめる）
 - 本体への要求は操作ごとに `POST {upstream}/{操作の名前}`、本文は `{"operation", "audience", "principal": {"type", "id", "org_id"} か null, "input"}`。`input` は検証済みで、要求を受けた公開範囲に見えるフィールドだけ。トークンは渡さない
-- 本体の応答は、成功なら 200 で `{"output": …}`、失敗なら 4xx・5xx で `{"error": {"code", "message", "reasons"}}`（`code` は 3.2 のコード。知らないコードや壊れた応答は `internal`）。本体に届かなければ `unavailable`
+- 本体の応答は、成功なら 200 で `{"output": …}`、失敗なら 4xx・5xx で `{"error": {"code", "message", "reasons"}}`（`code` は 3.2 のコード。知らないコード、`unauthenticated`（呼び出し元は認証済みなので、サイドカーと本体の間の設定の誤り）、壊れた応答、200 で `output` が無い応答は `internal`）。本体に届かなければ `unavailable`
 - 本体の出力はマニフェストの出力の型で確かめ、公開範囲に見えるフィールドだけを返す。マニフェストに無いフィールドや見せないフィールドを本体が返しても、呼び出し元には出ない。型が合わない・必須のフィールドが無ければ `internal`
 - 本体は、`API_SIDECAR_UPSTREAM_TOKEN` を `Authorization: Bearer` で受け取り、サイドカーからの要求だけを受ける（本体はループバックで待ち受ける）
 - 認証・認可は、`IAM_PUBLIC_URL` などがあれば iam（6章。`IAM_RESOURCE_<公開範囲>` で口ごとのリソース）、`-dev` なら開発用のトークン
@@ -79,7 +79,7 @@ api/
 ```
 
 - コア（`define`・`manifest`・`runtime`・`port`・`gen`・`cli`・`sidecar`）は `adapters/` を import しない（`internal/archtest` で検査）
-- Go 1.26 以上（grpc-go が求める版）。依存は grpc-go・protobuf と、YAML のマニフェストを読む go.yaml.in/yaml/v3 だけ。REST だけを使う利用者も、この2つをビルドに含む
+- Go 1.26 以上（grpc-go が求める版）。依存は grpc-go・protobuf と、YAML のマニフェストを読む go.yaml.in/yaml/v3 だけ。REST だけを使う利用者も、この3つをビルドに含む
 - プロトコルとアダプタは、使うものだけをビルドに含められるよう別パッケージにする
 
 ## 3. 定義

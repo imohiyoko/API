@@ -217,6 +217,10 @@ type output struct {
 
 // EncodeVisible は define.Encoder の実装。
 func (o output) EncodeVisible(visible func(min string) bool) (any, error) {
+	if len(o.raw) == 0 {
+		// 200 なのに output が無い（明示した null とは区別する）。
+		return nil, fmt.Errorf("sidecar: output from the upstream: missing output")
+	}
 	v, err := encodeValue(o.raw, o.schema, true, visible)
 	if err != nil {
 		return nil, fmt.Errorf("sidecar: output from the upstream: %w", err)

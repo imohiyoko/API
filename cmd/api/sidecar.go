@@ -95,6 +95,13 @@ func sidecarMain(m *manifest.Manifest, args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	errs := make(chan error, len(rest)+len(grpcAddrs))
+	for aud := range rest {
+		// 知らない公開範囲の口は、すべての要求に 404 を返すだけになる。起動の前に止める（gRPC は GRPCServer が拒む）。
+		if m.Rank(aud) < 0 {
+			fmt.Fprintf(os.Stderr, "sidecar: unknown audience %q in -listen\n", aud)
+			return 2
+		}
+	}
 	for aud, addr := range rest {
 		lis, err := net.Listen("tcp", addr)
 		if err != nil {

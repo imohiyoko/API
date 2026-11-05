@@ -212,3 +212,25 @@ func TestUnreachableUpstreamIsUnavailable(t *testing.T) {
 		t.Fatalf("unreachable upstream: %d %s", status, raw)
 	}
 }
+
+// 200 なのに output が無い応答と、本体の unauthenticated（サイドカーと本体の間の設定の誤り）は internal にする。
+func TestMisbehavingUpstream(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/users.get":
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = io.WriteString(w, `{"error":{"code":"unauthenticated","message":"not from the sidecar"}}`)
+		}
+	}))
+	t.Cleanup(up.Close)
+	srv := server(t, up.URL)
+	if status, _, raw := do(t, srv.Handler("internal"), "GET", "/users/usr_1", "internal", ""); status != 500 {
+		t.Fatalf("missing output: %d %s", status, raw)
+	}
+	if status, _, raw := do(t, srv.Handler("internal"), "GET", "/users", "internal", ""); status != 500 || strings.Contains(raw, "unauthenticated") {
+		t.Fatalf("upstream unauthenticated: %d %s", status, raw)
+	}
+}

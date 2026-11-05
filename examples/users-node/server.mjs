@@ -2,7 +2,7 @@
 // examples/users/api/manifest.yaml とサイドカー（api sidecar）で同じ API を出す。
 //
 //   PORT=3000 API_SIDECAR_UPSTREAM_TOKEN=secret node examples/users-node/server.mjs
-//   api -manifest examples/users/api/manifest.yaml sidecar -dev -upstream http://127.0.0.1:3000 -listen internal=127.0.0.1:8190
+//   API_SIDECAR_UPSTREAM_TOKEN=secret api -manifest examples/users/api/manifest.yaml sidecar -dev -upstream http://127.0.0.1:3000 -listen internal=127.0.0.1:8190
 //
 // サイドカーが認証・認可・入力の検証・フィールドの絞り込みをするので、本体は検証済みの入力を受け、
 // 全部のフィールドを返せばよい（公開範囲に見えないものはサイドカーが捨てる）。依存のパッケージは無い。

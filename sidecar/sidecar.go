@@ -151,7 +151,9 @@ func (o *operation) Call(ctx context.Context, in any) (any, error) {
 		return nil, fmt.Errorf("sidecar: %s: upstream returned %d with a body that is not JSON", o.spec.Name, resp.StatusCode)
 	}
 	if resp.StatusCode != http.StatusOK {
-		if res.Error == nil || !knownCodes[res.Error.Code] {
+		// 呼び出し元はサイドカーが認証済みなので、本体の unauthenticated はサイドカーと本体の間の設定の誤り
+		// （API_SIDECAR_UPSTREAM_TOKEN の食い違いなど）。呼び出し元のトークンが拒まれたように見せない。
+		if res.Error == nil || !knownCodes[res.Error.Code] || res.Error.Code == define.CodeUnauthenticated {
 			return nil, fmt.Errorf("sidecar: %s: upstream returned %d", o.spec.Name, resp.StatusCode)
 		}
 		return nil, &define.Error{Code: res.Error.Code, Message: res.Error.Message, Reasons: res.Error.Reasons}
