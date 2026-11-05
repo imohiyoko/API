@@ -32,6 +32,9 @@ type AudienceConfig struct {
 	Principals []string
 	// RequireOrg は、Org に属する主体だけを受けるか（partner の既定）。
 	RequireOrg bool
+	// Resource は、この口が受けるトークンの対象（RFC 8707 の resource、iam に登録したリソースの URI）。
+	// 空でなければ、Principal.Audiences にこれを含むトークンだけを受ける（ほかの API や口に向けたトークンを拒む）。
+	Resource   string
 	Disclosure Disclosure
 	// GRPCReflection は、gRPC の口にサーバーリフレクションを載せるか（internal の既定）。
 	// 載せると、契約（.proto）を持たない呼び出し元にも、その公開範囲の操作と型が見える。

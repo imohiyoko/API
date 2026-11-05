@@ -230,22 +230,31 @@ API に出すフィールドには `api` タグを付ける。タグの無いフ
 
 要求ごとの流れ：
 
-1. 認証情報を取り出す（`Authorization: Bearer` のトークンか API キー）
-2. iam のイントロスペクション（`POST /oauth2/introspect`、RFC 7662）で確かめ、主体（ユーザーかサービスアカウント）・Org・`sid` を得る。結果は iam の保証値（`session.validity_max_delay`、既定30秒）以内でキャッシュする
-3. 公開範囲と主体の種類が合うか確かめる（public の口に internal 用のトークンは通さない）
-4. `Authz` の宣言から `POST /v1/admin/authz:check` を呼ぶ。`access_token` を渡し、認証の文脈（`attested`）は iam に組み立てさせる
-5. 拒否の理由コードを、公開範囲の開示のルール（4.1）に合わせて返す
+1. 認証情報を取り出す（`Authorization: Bearer` のトークン）
+2. iam のイントロスペクション（`POST /oauth2/introspect`、RFC 7662）で確かめ、主体（ユーザーかサービスアカウント）・Org・`sid`・`aud`・`scope` を得る。結果は iam の保証値（`session.validity_max_delay`、既定30秒）以内でキャッシュする
+3. 口の `Resource`（`runtime.AudienceConfig`）があれば、トークンの `aud` にそれがあるか確かめる。無ければ `unauthenticated`（`wrong_audience`）
+4. 公開範囲と主体の種類が合うか確かめる（例：internal の口にユーザーのトークン）
+5. `Authz` の宣言から判定する。ユーザーは `POST /v1/admin/authz:check` を呼び、`access_token` を渡して認証の文脈（`attested`）は iam に組み立てさせる。サービスアカウントは、iam の check が主体として受けるまで（iam#152）、トークンのスコープに `Authz` の操作（例：`users:read`）があるかで判定する（無ければ `scope_missing`）
+6. 拒否の理由コードを、公開範囲の開示のルール（4.1）に合わせて返す
+
+受けるトークン：
+
+- ユーザー：iam が OIDC の連携先に発行したアクセストークン
+- サービスアカウント：client credentials（iam の `POST /v1/admin/token`）で、iam に登録したリソース（RFC 8707、iam の ADR 0112）に向けて取ったトークン。リソースの URI を口ごとに分け（例：`https://users.internal` と `https://users.example`）、`Resource` に設定すれば、ほかの口・API に向けたトークンを持ち込めない。リソースのスコープには `Authz` の操作の名前を登録する
+- 受けないもの：管理 API 向けのトークンと API キー（iam が `active: false` を返す）、リフレッシュトークン、Personal Access Token、DPoP・mTLS に結び付けたトークン（`cnf`。結び付けを確かめないので拒む）
 
 外部依存はポート（`port.Authenticator`、`port.Authorizer`）に閉じ、iam はアダプタ（`adapters/iam`）に置く。テスト用にインメモリの実装を持つ。
+iam を起動した E2E は `scripts/e2e-iam.sh`（CI）。
 
 ### 6.1 iam に求めている機能
 
-| issue | 内容 | 使う場面 |
-|---|---|---|
-| [iam#151](https://github.com/imohiyoko/iam/issues/151) | サービスアカウントのトークンと API キーをリソースサーバーが検証できる | internal・partner の認証 |
-| [iam#152](https://github.com/imohiyoko/iam/issues/152) | `authz:check` の主体にサービスアカウント | internal・partner の認可 |
-| [iam#153](https://github.com/imohiyoko/iam/issues/153) | 複数の判定をまとめる batch check | GraphQL・一覧 |
-| [iam#154](https://github.com/imohiyoko/iam/issues/154) | アクセストークンを対象の API に限る（RFC 8707） | 公開範囲をまたぐトークンの持ち込みを防ぐ |
+| issue | 内容 | 使う場面 | 状態 |
+|---|---|---|---|
+| [iam#151](https://github.com/imohiyoko/iam/issues/151) | サービスアカウントのトークンをリソースサーバーが検証できる | internal・partner の認証 | iam の ADR 0112（リソースに向けたトークン）で使える。API キーは管理 API 専用のまま |
+| [iam#152](https://github.com/imohiyoko/iam/issues/152) | `authz:check` の主体にサービスアカウント | internal・partner の認可 | 未。それまではスコープで判定 |
+| [iam#153](https://github.com/imohiyoko/iam/issues/153) | 複数の判定をまとめる batch check | GraphQL・一覧 | 未 |
+| [iam#154](https://github.com/imohiyoko/iam/issues/154) | アクセストークンを対象の API に限る（RFC 8707） | 公開範囲をまたぐトークンの持ち込みを防ぐ | iam の ADR 0112 で使える（口の `Resource`） |
+| [iam#190](https://github.com/imohiyoko/iam/issues/190) | サービスアカウントのトークンのイントロスペクションに `org_id` | partner（Org ごとの受け付けとレートリミット） | 未。それまではサービスアカウントで partner の口を呼べない |
 
 ## 7. 未決事項
 

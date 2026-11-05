@@ -36,6 +36,10 @@ func (c *opCall) run(ctx context.Context, token string, hasToken bool, client st
 		if err != nil {
 			return nil, c.unavailable("authenticate", err)
 		}
+		if c.ac.Resource != "" && !slices.Contains(p.Audiences, c.ac.Resource) {
+			// ほかの API・口に向けたトークン（RFC 8707）。RFC 6750 の invalid_token と同じく認証の失敗にする。
+			return nil, &define.Error{Code: define.CodeUnauthenticated, Reasons: []string{"wrong_audience"}}
+		}
 		if !slices.Contains(c.ac.Principals, p.Type) || (c.ac.RequireOrg && p.OrgID == "") {
 			// この口で受けない主体（例：internal の口にユーザーのトークン）。
 			return nil, &define.Error{Code: define.CodePermissionDenied, Reasons: []string{"principal_not_allowed"}}

@@ -4,6 +4,8 @@
 //	go run ./examples/users/cmd/users serve
 //
 // serve は、IAM_PUBLIC_URL などがあれば iam を使い、無ければ開発用のトークン（dev-internal・dev-partner・dev-user）を受ける。
+// IAM_RESOURCE_INTERNAL・IAM_RESOURCE_PARTNER・IAM_RESOURCE_PUBLIC があれば、その口は aud がその URI のトークンだけを受ける
+// （iam に登録したリソース。RFC 8707）。
 package main
 
 import (
@@ -13,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/imohiyoko/API/adapters/iam"
@@ -41,6 +44,14 @@ func main() {
 			log.Fatal(err)
 		}
 		cfg.Authenticator, cfg.Authorizer = c, c
+		cfg.Audiences = map[string]runtime.AudienceConfig{}
+		for _, aud := range []string{"internal", "partner", "public"} {
+			if r := os.Getenv("IAM_RESOURCE_" + strings.ToUpper(aud)); r != "" {
+				ac := runtime.DefaultAudienceConfig(aud)
+				ac.Resource = r
+				cfg.Audiences[aud] = ac
+			}
+		}
 	} else {
 		log.Print("IAM_PUBLIC_URL is not set: using development tokens")
 		cfg.Authenticator = memory.NewAuthenticator().
