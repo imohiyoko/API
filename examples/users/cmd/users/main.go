@@ -15,14 +15,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"time"
 
 	"github.com/imohiyoko/API/adapters/iam"
 	"github.com/imohiyoko/API/adapters/memory"
 	"github.com/imohiyoko/API/cli"
 	"github.com/imohiyoko/API/examples/users"
-	"github.com/imohiyoko/API/port"
 	"github.com/imohiyoko/API/runtime"
 )
 
@@ -32,21 +30,15 @@ func main() {
 		os.Exit(cli.Main(reg, os.Args[1:]))
 	}
 	cfg := runtime.Config{}
-	if url := os.Getenv("IAM_PUBLIC_URL"); url != "" {
-		c, err := iam.New(iam.Config{
-			PublicURL:    url,
-			AdminURL:     os.Getenv("IAM_ADMIN_URL"),
-			ClientID:     os.Getenv("IAM_CLIENT_ID"),
-			ClientSecret: os.Getenv("IAM_CLIENT_SECRET"),
-			AdminToken:   os.Getenv("IAM_ADMIN_TOKEN"),
-		})
+	if ic, ok := iam.ConfigFromEnv(); ok {
+		c, err := iam.New(ic)
 		if err != nil {
 			log.Fatal(err)
 		}
 		cfg.Authenticator, cfg.Authorizer = c, c
 		cfg.Audiences = map[string]runtime.AudienceConfig{}
 		for _, aud := range []string{"internal", "partner", "public"} {
-			if r := os.Getenv("IAM_RESOURCE_" + strings.ToUpper(aud)); r != "" {
+			if r := iam.ResourceFromEnv(aud); r != "" {
 				ac := runtime.DefaultAudienceConfig(aud)
 				ac.Resource = r
 				cfg.Audiences[aud] = ac
@@ -54,17 +46,7 @@ func main() {
 		}
 	} else {
 		log.Print("IAM_PUBLIC_URL is not set: using development tokens")
-		cfg.Authenticator = memory.NewAuthenticator().
-			Add("dev-internal", port.Principal{Type: port.PrincipalServiceAccount, ID: "sa_internal"}).
-			Add("dev-partner", port.Principal{Type: port.PrincipalServiceAccount, ID: "sa_partner", OrgID: "org_partner"}).
-			Add("dev-user", port.Principal{Type: port.PrincipalUser, ID: "usr_dev"})
-		authz := memory.NewAuthorizer()
-		for _, id := range []string{"sa_internal", "sa_partner", "usr_dev"} {
-			for _, a := range []string{"users:read", "users:list", "users:create", "users:delete"} {
-				authz.Allow(memory.Grant{PrincipalID: id, Action: a})
-			}
-		}
-		cfg.Authorizer = authz
+		cfg.Authenticator, cfg.Authorizer = memory.DevTokens("users:read", "users:list", "users:create", "users:delete")
 	}
 	srv, err := runtime.Build(reg, cfg)
 	if err != nil {

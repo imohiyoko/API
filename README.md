@@ -33,6 +33,19 @@ go test ./...
 go run ./examples/users/cmd/users gen -out examples/users/api -title Users
 go run ./examples/users/cmd/users serve   # 開発用のトークン dev-internal・dev-partner・dev-user
 scripts/e2e-grpc.sh                       # 生成した .proto で grpcurl から呼ぶ E2E
+scripts/e2e-iam.sh                        # 実際の iam を起動し、サービスアカウントのトークンで呼ぶ E2E
+scripts/e2e-sidecar.sh                    # Node.js の本体をサイドカーで出し、Go のライブラリと同じ応答になる E2E
+```
+
+### Go 以外の本体（サイドカー）
+
+マニフェストを YAML で書き（例：[examples/users/api/manifest.yaml](examples/users/api/manifest.yaml)）、本体の隣でサイドカーを動かす。
+本体は操作ごとに `POST /{操作の名前}` を受け、検証済みの入力と認証済みの主体を JSON で受け取る（例：[examples/users-node](examples/users-node)）。
+
+```sh
+node examples/users-node/server.mjs &
+go run ./cmd/api -manifest examples/users/api/manifest.yaml sidecar -dev \
+  -upstream http://127.0.0.1:3000 -listen internal=127.0.0.1:8090,partner=:8091,public=:8092
 ```
 
 Go 1.26 以上が要る。

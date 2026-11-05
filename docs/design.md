@@ -44,6 +44,21 @@ Go の定義 ──書き出し──▶ マニフェスト（JSON / YAML。言�
   - **サイドカー**：Go 以外のサービスの隣で動く。認証・認可・プロトコルの変換・フィールドの絞り込みをして、本体のハンドラーには単純な HTTP（JSON）で渡す
 - 必要になれば、ほかの言語の薄いライブラリをマニフェストの上に足す
 
+#### サイドカー（`api sidecar`、`sidecar/`）
+
+```
+api -manifest api/manifest.yaml sidecar -upstream http://127.0.0.1:3000 \
+    -listen internal=127.0.0.1:8090,partner=:8091,public=:8092 -grpc internal=127.0.0.1:9090
+```
+
+- マニフェスト（JSON か YAML）の操作を、ライブラリと同じ `runtime` で動かす。認証・認可・レートリミット・入力の検証・フィールドの絞り込み・エラーの開示・REST と gRPC はライブラリと同じ実装なので、挙動も同じ（`scripts/e2e-sidecar.sh` で、Node.js の本体と Go のライブラリの応答が一致することを確かめる）
+- 本体への要求は操作ごとに `POST {upstream}/{操作の名前}`、本文は `{"operation", "audience", "principal": {"type", "id", "org_id"} か null, "input"}`。`input` は検証済みで、要求を受けた公開範囲に見えるフィールドだけ。トークンは渡さない
+- 本体の応答は、成功なら 200 で `{"output": …}`、失敗なら 4xx・5xx で `{"error": {"code", "message", "reasons"}}`（`code` は 3.2 のコード。知らないコードや壊れた応答は `internal`）。本体に届かなければ `unavailable`
+- 本体の出力はマニフェストの出力の型で確かめ、公開範囲に見えるフィールドだけを返す。マニフェストに無いフィールドや見せないフィールドを本体が返しても、呼び出し元には出ない。型が合わない・必須のフィールドが無ければ `internal`
+- 本体は、`API_SIDECAR_UPSTREAM_TOKEN` を `Authorization: Bearer` で受け取り、サイドカーからの要求だけを受ける（本体はループバックで待ち受ける）
+- 認証・認可は、`IAM_PUBLIC_URL` などがあれば iam（6章。`IAM_RESOURCE_<公開範囲>` で口ごとのリソース）、`-dev` なら開発用のトークン
+- ライブラリとの違い：Go の型を持たないので、`null` は `optional` のフィールドならどれでも受ける（Go ではポインターのフィールドだけ）
+
 ### 2.3 リポジトリ構成
 
 ```
@@ -52,18 +67,19 @@ api/
 ├── manifest/    # マニフェストの型、読み書き、検査（4.3）、REST・gRPC の規則（5.1）
 ├── runtime/     # 共通の層（検証・認証・認可・エラーの開示）と公開範囲ごとの口（REST・gRPC）
 ├── gen/         # 契約ファイルの生成（openapi/ proto/。今後 sdl/ asyncapi/）
-├── scripts/     # E2E（e2e-grpc.sh）
+├── scripts/     # E2E（e2e-grpc.sh・e2e-iam.sh・e2e-sidecar.sh）
 ├── port/        # Authenticator・Authorizer など外部依存のポート
 ├── adapters/    # iam/ memory/
 ├── cli/         # check・manifest・gen（利用者の main から cli.Main(registry, args) で呼ぶ）
-├── cmd/api/     # マニフェストのファイルを扱う CLI（今後 sidecar も）
-├── examples/    # 例（users）
+├── cmd/api/     # マニフェストのファイル（JSON・YAML）を扱う CLI と sidecar
+├── sidecar/     # サイドカー：マニフェストの操作を本体への HTTP（JSON）の呼び出しにする
+├── examples/    # 例（users、Node.js の本体の users-node）
 ├── internal/archtest/  # モジュール境界の検査
 └── docs/
 ```
 
-- コア（`define`・`manifest`・`runtime`・`port`・`gen`・`cli`）は `adapters/` を import しない（`internal/archtest` で検査）
-- Go 1.26 以上（grpc-go が求める版）。依存は grpc-go・protobuf だけ。REST だけを使う利用者も、この2つをビルドに含む
+- コア（`define`・`manifest`・`runtime`・`port`・`gen`・`cli`・`sidecar`）は `adapters/` を import しない（`internal/archtest` で検査）
+- Go 1.26 以上（grpc-go が求める版）。依存は grpc-go・protobuf と、YAML のマニフェストを読む go.yaml.in/yaml/v3 だけ。REST だけを使う利用者も、この2つをビルドに含む
 - プロトコルとアダプタは、使うものだけをビルドに含められるよう別パッケージにする
 
 ## 3. 定義

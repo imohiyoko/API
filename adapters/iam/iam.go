@@ -21,6 +21,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -45,6 +46,28 @@ type Config struct {
 	HTTPClient *http.Client
 	// Now は時刻（テスト用）。nil なら time.Now。
 	Now func() time.Time
+}
+
+// ConfigFromEnv は環境変数から設定を読む（例のサーバーと `api sidecar` が使う）。IAM_PUBLIC_URL が無ければ false。
+//
+//	IAM_PUBLIC_URL・IAM_ADMIN_URL・IAM_CLIENT_ID・IAM_CLIENT_SECRET・IAM_ADMIN_TOKEN
+func ConfigFromEnv() (Config, bool) {
+	url := os.Getenv("IAM_PUBLIC_URL")
+	if url == "" {
+		return Config{}, false
+	}
+	return Config{
+		PublicURL:    url,
+		AdminURL:     os.Getenv("IAM_ADMIN_URL"),
+		ClientID:     os.Getenv("IAM_CLIENT_ID"),
+		ClientSecret: os.Getenv("IAM_CLIENT_SECRET"),
+		AdminToken:   os.Getenv("IAM_ADMIN_TOKEN"),
+	}, true
+}
+
+// ResourceFromEnv は公開範囲の口が受けるトークンの対象（IAM_RESOURCE_<公開範囲の大文字>）。無ければ空。
+func ResourceFromEnv(audience string) string {
+	return os.Getenv("IAM_RESOURCE_" + strings.ToUpper(audience))
 }
 
 // maxCache はイントロスペクションの結果を持つ件数の上限。超えたら期限切れを捨て、それでも多ければ持たない。
