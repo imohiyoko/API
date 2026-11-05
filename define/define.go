@@ -74,7 +74,7 @@ func Authz(action string, resource ...ResourceOption) Option {
 	}
 }
 
-// Anonymous は、認証なしで呼べる操作にする。public に出す操作は Authz か Anonymous が要る（design.md 4.2）。
+// Anonymous は、認証なしで呼べる操作にする。どの公開範囲に出す操作にも Authz か Anonymous が要る（design.md 4.2）。
 func Anonymous() Option {
 	return func(o *manifest.Operation) { o.Anonymous = true }
 }
