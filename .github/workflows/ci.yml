@@ -32,5 +32,7 @@ jobs:
         run: scripts/e2e-grpc.sh
       - name: iam E2E (service account tokens, scopes and resources against a real iam)
         run: scripts/e2e-iam.sh
+      - name: sidecar E2E (Node.js upstream with the YAML manifest matches the Go library)
+        run: scripts/e2e-sidecar.sh
       - run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...

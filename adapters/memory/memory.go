@@ -84,3 +84,22 @@ func (a *Authorizer) Check(_ context.Context, req port.CheckRequest) (port.Decis
 	}
 	return port.Decision{Allowed: false, Reasons: []string{"no_grant"}}, nil
 }
+
+// DevTokens は開発用のトークン（例のサーバーと `api sidecar -dev` が使う）。本番では使わない。
+//
+//	dev-internal：internal 用のサービスアカウント
+//	dev-partner：提携先 org_partner のサービスアカウント
+//	dev-user：利用者
+func DevTokens(actions ...string) (*Authenticator, *Authorizer) {
+	authn := NewAuthenticator().
+		Add("dev-internal", port.Principal{Type: port.PrincipalServiceAccount, ID: "sa_internal"}).
+		Add("dev-partner", port.Principal{Type: port.PrincipalServiceAccount, ID: "sa_partner", OrgID: "org_partner"}).
+		Add("dev-user", port.Principal{Type: port.PrincipalUser, ID: "usr_dev"})
+	authz := NewAuthorizer()
+	for _, id := range []string{"sa_internal", "sa_partner", "usr_dev"} {
+		for _, a := range actions {
+			authz.Allow(Grant{PrincipalID: id, Action: a})
+		}
+	}
+	return authn, authz
+}

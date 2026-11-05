@@ -12,7 +12,7 @@ import (
 )
 
 func TestCoreDoesNotImportAdapters(t *testing.T) {
-	for _, dir := range []string{"define", "manifest", "runtime", "port", "gen", "cli"} {
+	for _, dir := range []string{"define", "manifest", "runtime", "port", "gen", "cli", "sidecar"} {
 		root := filepath.Join("..", "..", dir)
 		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {

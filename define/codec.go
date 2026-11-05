@@ -211,9 +211,18 @@ func scalarString(v reflect.Value) string {
 }
 
 // Encode は出力を、公開範囲に見えるフィールドだけの JSON にできる値にする（design.md 4.1 のフィールドの絞り込み）。
-// タグの無いフィールドは出さない。
+// タグの無いフィールドは出さない。Encoder を実装する値は、自分で絞り込む。
 func Encode(value any, visible func(min string) bool) (any, error) {
+	if e, ok := value.(Encoder); ok {
+		return e.EncodeVisible(visible)
+	}
 	return encode(reflect.ValueOf(value), visible)
+}
+
+// Encoder は、Go の型を持たない出力（サイドカーが本体から受けた JSON など）が自分で絞り込むためのもの。
+// 返す値は Encode と同じ形にする：object は map[string]any、array は []any、date-time は time.Time、byte は []byte。
+type Encoder interface {
+	EncodeVisible(visible func(min string) bool) (any, error)
 }
 
 func encode(v reflect.Value, visible func(string) bool) (any, error) {
