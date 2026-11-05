@@ -1,8 +1,14 @@
 // Package iam は imohiyoko/iam を使う認証・認可の実装（design.md 6章、ADR 0004）。
 //
-// 認証はイントロスペクション（POST /oauth2/introspect、RFC 7662）、認可は管理 API の POST /v1/admin/authz:check。
-// この版で確かめられるのは、iam が OIDC の連携先に発行したユーザーのアクセストークンだけ。
-// サービスアカウントのトークンと API キーは imohiyoko/iam#151、サービスアカウントの判定は #152 を待つ。
+// 認証はイントロスペクション（POST /oauth2/introspect、RFC 7662）。受けるのは次の2つ。
+//   - iam が OIDC の連携先に発行したユーザーのアクセストークン（atk_…）
+//   - サービスアカウントが client credentials（POST /v1/admin/token）で、iam に登録したリソースに向けて取ったトークン
+//     （sat_…、iam の ADR 0112）。管理 API 向けのトークンと API キー（sac_…）は iam が active: false を返すので受けない
+//
+// DPoP・mTLS に結び付けたトークン（cnf のあるもの）は、結び付けを確かめられないので受けない。
+//
+// 認可は、ユーザーなら管理 API の POST /v1/admin/authz:check。サービスアカウントは iam の check が主体として受けない
+// （imohiyoko/iam#152）ので、それまではトークンのスコープに操作の Authz（例：users:read）があるかで判定する。
 package iam
 
 import (
@@ -15,6 +21,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -73,14 +80,61 @@ func New(cfg Config) (*Client, error) {
 	return &Client{cfg: cfg, cache: map[[32]byte]cached{}}, nil
 }
 
+// serviceAccountPrefix は iam のサービスアカウントの ID の接頭辞。
+const serviceAccountPrefix = "sva_"
+
 // introspection は RFC 7662 の応答のうち使うもの。
 type introspection struct {
-	Active    bool   `json:"active"`
-	Sub       string `json:"sub"`
-	OrgID     string `json:"org_id"`
-	SID       string `json:"sid"`
-	TokenType string `json:"token_type"`
-	Exp       int64  `json:"exp"`
+	Active    bool            `json:"active"`
+	Sub       string          `json:"sub"`
+	ClientID  string          `json:"client_id"`
+	OrgID     string          `json:"org_id"`
+	SID       string          `json:"sid"`
+	TokenType string          `json:"token_type"`
+	Exp       int64           `json:"exp"`
+	Scope     string          `json:"scope"`
+	Aud       audience        `json:"aud"`
+	Cnf       json.RawMessage `json:"cnf"`
+}
+
+// audience は aud（RFC 7662 では文字列か文字列の配列）。
+type audience []string
+
+func (a *audience) UnmarshalJSON(b []byte) error {
+	var one string
+	if err := json.Unmarshal(b, &one); err == nil {
+		*a = audience{one}
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(b, &many); err != nil {
+		return err
+	}
+	*a = many
+	return nil
+}
+
+// principal は応答を主体にする。受けないトークンなら ok が偽。
+func (r introspection) principal(token string) (p port.Principal, ok bool) {
+	// アクセストークンだけを受ける（リフレッシュトークン・Personal Access Token は API の認証情報にしない）。
+	if !r.Active || r.Sub == "" || (r.TokenType != "" && r.TokenType != "access_token") {
+		return p, false
+	}
+	// 結び付けたトークンは、同じ鍵の証明（DPoP）か証明書を確かめないと盗んだ者にも使える。確かめられないので拒む。
+	if len(r.Cnf) > 0 && string(r.Cnf) != "null" {
+		return p, false
+	}
+	p = port.Principal{Type: port.PrincipalUser, ID: r.Sub, OrgID: r.OrgID, SID: r.SID, Token: token,
+		Audiences: []string(r.Aud), Scopes: strings.Fields(r.Scope)}
+	if strings.HasPrefix(r.Sub, serviceAccountPrefix) {
+		// サービスアカウントのトークンは client_id と sub がどちらもサービスアカウントの ID。
+		if r.ClientID != r.Sub {
+			return port.Principal{}, false
+		}
+		p.Type = port.PrincipalServiceAccount
+		p.SID = ""
+	}
+	return p, true
 }
 
 // Authenticate は port.Authenticator の実装。
@@ -109,9 +163,7 @@ func (c *Client) Authenticate(ctx context.Context, token string) (port.Principal
 	if err := c.do(req, &res); err != nil {
 		return port.Principal{}, fmt.Errorf("iam: introspect: %w", err)
 	}
-	// アクセストークンだけを受ける（リフレッシュトークンは API の認証情報ではない）。
-	active := res.Active && res.Sub != "" && (res.TokenType == "" || res.TokenType == "access_token")
-	p := port.Principal{Type: port.PrincipalUser, ID: res.Sub, OrgID: res.OrgID, SID: res.SID, Token: token}
+	p, active := res.principal(token)
 	expires := now.Add(c.cfg.CacheTTL)
 	if active && res.Exp > 0 {
 		if exp := time.Unix(res.Exp, 0); exp.Before(expires) {
@@ -153,7 +205,14 @@ type checkResult struct {
 }
 
 // Check は port.Authorizer の実装。主体のアクセストークンを渡し、認証の文脈は iam に組み立てさせる（attested）。
+// サービスアカウントは、iam の check が受けるまで（imohiyoko/iam#152）トークンのスコープで判定する。
 func (c *Client) Check(ctx context.Context, r port.CheckRequest) (port.Decision, error) {
+	if r.Principal.Type == port.PrincipalServiceAccount {
+		if slices.Contains(r.Principal.Scopes, r.Action) {
+			return port.Decision{Allowed: true}, nil
+		}
+		return port.Decision{Allowed: false, Reasons: []string{"scope_missing"}}, nil
+	}
 	body, err := json.Marshal(checkRequest{
 		PrincipalType: r.Principal.Type,
 		PrincipalID:   r.Principal.ID,

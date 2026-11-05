@@ -24,6 +24,10 @@ type Principal struct {
 	OrgID string
 	// SID はログインの系列（iam の sid）。無ければ空。
 	SID string
+	// Audiences はトークンの対象（イントロスペクションの aud）。公開範囲の Resource と照らす（design.md 6.1）。
+	Audiences []string
+	// Scopes はトークンのスコープ。
+	Scopes []string
 	// Token は認証に使ったトークン。認可で iam に認証の文脈を組み立てさせるために渡す（design.md 6章）。ログに出さない。
 	Token string `json:"-"`
 }

@@ -30,5 +30,7 @@ jobs:
           test -z "$(git status --porcelain examples/users/api)"
       - name: gRPC E2E (grpcurl with the generated .proto)
         run: scripts/e2e-grpc.sh
+      - name: iam E2E (service account tokens, scopes and resources against a real iam)
+        run: scripts/e2e-iam.sh
       - run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
