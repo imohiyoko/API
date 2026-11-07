@@ -1,6 +1,6 @@
 # API Design Doc
 
-- Status: Draft / Last updated: 2026-11-02
+- Status: Draft / Last updated: 2026-11-07
 - このドキュメントは「今どうなっているか」だけを書く。判断の理由は [ADR](adr/README.md)、フェーズごとのゴールは [roadmap.md](roadmap.md)
 
 ## 1. 目的
@@ -250,14 +250,20 @@ API に出すフィールドには `api` タグを付ける。タグの無いフ
 2. iam のイントロスペクション（`POST /oauth2/introspect`、RFC 7662）で確かめ、主体（ユーザーかサービスアカウント）・Org・`sid`・`aud`・`scope` を得る。結果は iam の保証値（`session.validity_max_delay`、既定30秒）以内でキャッシュする
 3. 口の `Resource`（`runtime.AudienceConfig`）があれば、トークンの `aud` にそれがあるか確かめる。無ければ `unauthenticated`（`wrong_audience`）
 4. 公開範囲と主体の種類が合うか確かめる（例：internal の口にユーザーのトークン）
-5. `Authz` の宣言から判定する。ユーザーは `POST /v1/admin/authz:check` を呼び、`access_token` を渡して認証の文脈（`attested`）は iam に組み立てさせる。サービスアカウントは、iam の check が主体として受けるまで（iam#152）、トークンのスコープに `Authz` の操作（例：`users:read`）があるかで判定する（無ければ `scope_missing`）
+5. `Authz` の宣言から判定する。ユーザーもサービスアカウントも `POST /v1/admin/authz:check` を呼び、主体の種類（`principal_type`）・Org・`access_token` を渡す。ロールの付与・Org の範囲・認証の文脈（`attested`）は iam が決める。サービスアカウントのトークンにスコープがあり、そこに `Authz` の操作が無ければ、iam を呼ばずに拒む（`scope_missing`）
 6. 拒否の理由コードを、公開範囲の開示のルール（4.1）に合わせて返す
 
 受けるトークン：
 
 - ユーザー：iam が OIDC の連携先に発行したアクセストークン
 - サービスアカウント：client credentials（iam の `POST /v1/admin/token`）で、iam に登録したリソース（RFC 8707、iam の ADR 0112）に向けて取ったトークン。リソースの URI を口ごとに分け（例：`https://users.internal` と `https://users.example`）、`Resource` に設定すれば、ほかの口・API に向けたトークンを持ち込めない。リソースのスコープには `Authz` の操作の名前を登録する
-- 受けないもの：管理 API 向けのトークンと API キー（iam が `active: false` を返す）、リフレッシュトークン、Personal Access Token、DPoP・mTLS に結び付けたトークン（`cnf`。結び付けを確かめないので拒む）
+- Org に属するサービスアカウントのトークンには `org_id` が載る（iam#190）。partner の口は Org を求めるので、Org に属さないサービスアカウントは呼べない（`principal_not_allowed`）
+- 主体の種類はイントロスペクションの `principal_type`（iam の ADR 0120）で決める。ID の接頭辞（`sva_`）と食い違うもの、知らない種類は受けない
+- 受けないもの：管理 API 向けのトークンと API キー（iam が `active: false` を返す。iam のフィーチャー `api_key_introspection` で API キーを確かめられるようになったが、API キーは向け先（`aud`）を持たず口を分けられないので受けない）、リフレッシュトークン、Personal Access Token、DPoP・mTLS に結び付けたトークン（`cnf`。結び付けを確かめないので拒む）
+
+操作の名前の空間：iam のロールの権限は、iam 自身の管理の権限（`users:read`・`users:delete` など）と同じ空間にある。`Authz` の操作が iam の権限と重なると、この API 向けに付与したロールで iam の管理 API も使えてしまう。そのため `iam.Config.PermissionPrefix`（環境変数 `IAM_PERMISSION_PREFIX`、例：`users-api.`）を付けて check に渡し、ロールにもその名前で登録する（例：`users-api.users:read`）。トークンのスコープはリソースごとなので頭を付けない。
+
+iam のリソースに `introspection_clients`（iam の ADR 0120）でこの API の連携先を登録すれば、ほかの連携先にはこのリソースに向けたトークンを確かめさせない。
 
 外部依存はポート（`port.Authenticator`、`port.Authorizer`）に閉じ、iam はアダプタ（`adapters/iam`）に置く。テスト用にインメモリの実装を持つ。
 iam を起動した E2E は `scripts/e2e-iam.sh`（CI）。
@@ -266,11 +272,11 @@ iam を起動した E2E は `scripts/e2e-iam.sh`（CI）。
 
 | issue | 内容 | 使う場面 | 状態 |
 |---|---|---|---|
-| [iam#151](https://github.com/imohiyoko/iam/issues/151) | サービスアカウントのトークンをリソースサーバーが検証できる | internal・partner の認証 | iam の ADR 0112（リソースに向けたトークン）で使える。API キーは管理 API 専用のまま |
-| [iam#152](https://github.com/imohiyoko/iam/issues/152) | `authz:check` の主体にサービスアカウント | internal・partner の認可 | 未。それまではスコープで判定 |
-| [iam#153](https://github.com/imohiyoko/iam/issues/153) | 複数の判定をまとめる batch check | GraphQL・一覧 | 未 |
-| [iam#154](https://github.com/imohiyoko/iam/issues/154) | アクセストークンを対象の API に限る（RFC 8707） | 公開範囲をまたぐトークンの持ち込みを防ぐ | iam の ADR 0112 で使える（口の `Resource`） |
-| [iam#190](https://github.com/imohiyoko/iam/issues/190) | サービスアカウントのトークンのイントロスペクションに `org_id` | partner（Org ごとの受け付けとレートリミット） | 未。それまではサービスアカウントで partner の口を呼べない |
+| [iam#151](https://github.com/imohiyoko/iam/issues/151) | サービスアカウントのトークンをリソースサーバーが検証できる | internal・partner の認証 | 使える（iam の ADR 0112・0120。`principal_type` を使う。API キーは受けない） |
+| [iam#152](https://github.com/imohiyoko/iam/issues/152) | `authz:check` の主体にサービスアカウント | internal・partner の認可 | 使える |
+| [iam#153](https://github.com/imohiyoko/iam/issues/153) | 複数の判定をまとめる batch check | GraphQL・一覧 | iam にある（`authz:batch-check`）。使うのは M4 |
+| [iam#154](https://github.com/imohiyoko/iam/issues/154) | アクセストークンを対象の API に限る（RFC 8707） | 公開範囲をまたぐトークンの持ち込みを防ぐ | 使える（口の `Resource`。iam の側でも `introspection_clients` で限れる） |
+| [iam#190](https://github.com/imohiyoko/iam/issues/190) | サービスアカウントのトークンのイントロスペクションに `org_id` | partner（Org ごとの受け付けとレートリミット） | 使える |
 
 ## 7. 未決事項
 
