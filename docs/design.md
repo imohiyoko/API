@@ -280,7 +280,7 @@ iam を起動した E2E は `scripts/e2e-iam.sh`（CI）。
 | [iam#152](https://github.com/imohiyoko/iam/issues/152) | `authz:check` の主体にサービスアカウント | internal・partner の認可 | 使える |
 | [iam#153](https://github.com/imohiyoko/iam/issues/153) | 複数の判定をまとめる batch check | GraphQL・一覧 | iam にある（`authz:batch-check`）。使うのは M4 |
 | [iam#154](https://github.com/imohiyoko/iam/issues/154) | アクセストークンを対象の API に限る（RFC 8707） | 公開範囲をまたぐトークンの持ち込みを防ぐ | 使える（口の `Resource`。iam の側でも `introspection_clients` で限れる） |
-| [iam#195](https://github.com/imohiyoko/iam/issues/195) | iam 自身の権限と連携先の権限の名前空間を分ける | 操作の権限が iam の管理の権限と重ならない | 使える（iam の ADR 0121。権限のカタログ） |
+| [iam#195](https://github.com/imohiyoko/iam/issues/195) | iam 自身の権限と連携先の権限の名前空間を分ける | 操作の権限が iam の管理の権限と重ならない | iam#198 で対応中（ADR 0121。権限のカタログ）。マージ後に使える |
 | [iam#190](https://github.com/imohiyoko/iam/issues/190) | サービスアカウントのトークンのイントロスペクションに `org_id` | partner（Org ごとの受け付けとレートリミット） | 使える |
 
 ## 7. 未決事項
