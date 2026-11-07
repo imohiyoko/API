@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -66,13 +67,13 @@ func fakeIAM(t *testing.T, introspections *atomic.Int32) *httptest.Server {
 		switch {
 		case req["principal_id"] == "usr_missing":
 			w.WriteHeader(http.StatusNotFound)
-		case req["principal_type"] == "user" && req["action"] == "users:read" && req["resource_id"] == "usr_1" &&
+		case req["principal_type"] == "user" && req["action"] == "users-api.users:read" && req["resource_id"] == "usr_1" &&
 			req["org_id"] == "org_1" && req["access_token"] == "good":
 			_ = json.NewEncoder(w).Encode(map[string]any{"allowed": true})
-		case req["principal_type"] == "service_account" && req["principal_id"] == "sva_1" && req["action"] == "users:read" &&
+		case req["principal_type"] == "service_account" && req["principal_id"] == "sva_1" && req["action"] == "users-api.users:read" &&
 			req["org_id"] == "org_2" && req["access_token"] == "sat":
 			_ = json.NewEncoder(w).Encode(map[string]any{"allowed": true})
-		case req["principal_type"] == "service_account" && req["action"] == "users:delete":
+		case req["principal_type"] == "service_account" && req["action"] == "users-api.users:delete":
 			_ = json.NewEncoder(w).Encode(map[string]any{"allowed": false, "reasons": []string{"inactive"}})
 		default:
 			_ = json.NewEncoder(w).Encode(map[string]any{"allowed": false, "unmet": []string{"condition.amr"}})
@@ -85,7 +86,7 @@ func fakeIAM(t *testing.T, introspections *atomic.Int32) *httptest.Server {
 
 func newClient(t *testing.T, url string, now func() time.Time) *iam.Client {
 	t.Helper()
-	c, err := iam.New(iam.Config{PublicURL: url, AdminURL: url, ClientID: "rs", ClientSecret: "s3cret", AdminToken: "admin-key", Now: now})
+	c, err := iam.New(iam.Config{PublicURL: url, AdminURL: url, ClientID: "rs", ClientSecret: "s3cret", AdminToken: "admin-key", PermissionCatalog: "users-api", Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +143,7 @@ func TestCheck(t *testing.T) {
 		t.Fatalf("missing principal: got %+v %v", d, err)
 	}
 
-	bad, _ := iam.New(iam.Config{PublicURL: srv.URL, AdminURL: srv.URL, ClientID: "rs", ClientSecret: "s3cret", AdminToken: "wrong"})
+	bad, _ := iam.New(iam.Config{PublicURL: srv.URL, AdminURL: srv.URL, ClientID: "rs", ClientSecret: "s3cret", AdminToken: "wrong", PermissionCatalog: "users-api"})
 	if _, err := bad.Check(ctx, port.CheckRequest{Principal: user, Action: "users:read"}); err == nil {
 		t.Fatal("want an error when iam rejects the admin token")
 	}
@@ -190,7 +191,7 @@ func TestServiceAccountToken(t *testing.T) {
 	}
 }
 
-func TestPermissionPrefix(t *testing.T) {
+func TestPermissionCatalog(t *testing.T) {
 	var got string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req map[string]string
@@ -199,17 +200,20 @@ func TestPermissionPrefix(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"allowed": true})
 	}))
 	t.Cleanup(srv.Close)
-	c, err := iam.New(iam.Config{PublicURL: srv.URL, AdminURL: srv.URL, ClientID: "rs", ClientSecret: "s", AdminToken: "a", PermissionPrefix: "users-api."})
+	cfg := iam.Config{PublicURL: srv.URL, AdminURL: srv.URL, ClientID: "rs", ClientSecret: "s", AdminToken: "a", PermissionCatalog: "users-api"}
+	c, err := iam.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// スコープは頭を付けずに比べ、iam の check には頭を付けて渡す。
+	// スコープは接頭辞を付けずに比べ、iam の check にはカタログの権限の名前で渡す。
 	sa := port.Principal{Type: port.PrincipalServiceAccount, ID: "sva_1", Scopes: []string{"users:read"}}
 	if d, err := c.Check(context.Background(), port.CheckRequest{Principal: sa, Action: "users:read"}); err != nil || !d.Allowed || got != "users-api.users:read" {
 		t.Fatalf("got %+v %v, action %q", d, err, got)
 	}
-	for _, bad := range []string{"Users.", "1x", "a:b", "a b"} {
-		if _, err := iam.New(iam.Config{PublicURL: "x", AdminURL: "x", ClientID: "x", ClientSecret: "x", AdminToken: "x", PermissionPrefix: bad}); err == nil {
+	// カタログは必須（無ければ連携先の権限の名前にできない）で、iam の接頭辞の形に限る。
+	for _, bad := range []string{"", "Users", "1x", "users.api", "users_api", "a b", strings.Repeat("a", 33)} {
+		cfg.PermissionCatalog = bad
+		if _, err := iam.New(cfg); err == nil {
 			t.Errorf("%q: want an error", bad)
 		}
 	}
