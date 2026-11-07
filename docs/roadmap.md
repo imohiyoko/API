@@ -42,14 +42,14 @@
 **ゴール**：同じ定義が gRPC でも出せ、internal・partner の呼び出し元を iam で確かめられる。
 
 - .proto の生成と、生成コードを使わない gRPC サーバー（5.2）
-- サービスアカウントの認証・判定（iam の ADR 0112 のリソースに向けたトークン。判定は iam#152 まではスコープで行う）
+- サービスアカウントの認証・判定（iam の ADR 0112 のリソースに向けたトークン。判定は iam の authz:check）
 - 提携先ごとのレートリミット
 
 ### 完了条件
 
 - [x] 同じ定義から生成した .proto で、別のクライアント（grpcurl など）から呼べる E2E が通る（`scripts/e2e-grpc.sh`、CI）
 - [x] REST と gRPC で、同じ入力に同じ出力・同じ拒否が返るテストが通る（`runtime/grpc_test.go`）
-- [x] iam を起動した E2E で、サービスアカウントのトークンの認証と、判定の許可・拒否が通る（`scripts/e2e-iam.sh`、CI。API キーは iam が管理 API 専用にしたので受けないことを確かめる。`authz:check` でサービスアカウントを判定するのは iam#152 の後）
+- [x] iam を起動した E2E で、サービスアカウントのトークンの認証と、判定の許可・拒否が通る（`scripts/e2e-iam.sh`、CI。ロールの付与とスコープの両方で拒むこと、Org に属するサービスアカウントだけが partner の口を呼べること、API キーを受けないことを確かめる）
 - [x] public の口に internal 用のサービスアカウントのトークンを送ると拒むテストが通る（口ごとのリソース。`runtime/resource_test.go`、`scripts/e2e-iam.sh`）
 - [x] 提携先ごとのレートリミットが、ほかの提携先に影響しないテストが通る（`runtime/ratelimit_test.go`）
 

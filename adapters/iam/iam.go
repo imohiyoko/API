@@ -3,12 +3,14 @@
 // 認証はイントロスペクション（POST /oauth2/introspect、RFC 7662）。受けるのは次の2つ。
 //   - iam が OIDC の連携先に発行したユーザーのアクセストークン（atk_…）
 //   - サービスアカウントが client credentials（POST /v1/admin/token）で、iam に登録したリソースに向けて取ったトークン
-//     （sat_…、iam の ADR 0112）。管理 API 向けのトークンと API キー（sac_…）は iam が active: false を返すので受けない
+//     （sat_…、iam の ADR 0112）。管理 API 向けのトークンは iam が active: false を返す。API キー（sac_…）は、iam の
+//     フィーチャー api_key_introspection で確かめられても（token_type: api_key）、向け先を持たないので受けない
 //
 // DPoP・mTLS に結び付けたトークン（cnf のあるもの）は、結び付けを確かめられないので受けない。
 //
-// 認可は、ユーザーなら管理 API の POST /v1/admin/authz:check。サービスアカウントは iam の check が主体として受けない
-// （imohiyoko/iam#152）ので、それまではトークンのスコープに操作の Authz（例：users:read）があるかで判定する。
+// 認可は管理 API の POST /v1/admin/authz:check。ユーザーもサービスアカウントも、主体の種類（principal_type）とアクセストークンを
+// 渡し、ロールの付与・Org の範囲・認証の文脈は iam が決める（サービスアカウントは imohiyoko/iam#152）。サービスアカウントの
+// トークンにスコープがあれば、そのスコープに操作の Authz（例：users:read）が無い呼び出しは iam を呼ばずに拒む（scope_missing）。
 package iam
 
 import (
@@ -41,6 +43,11 @@ type Config struct {
 	ClientSecret string
 	// AdminToken は、権限 authz:check を持つサービスアカウントの API キーかアクセストークン。
 	AdminToken string
+	// PermissionPrefix は authz:check に渡す操作の頭に付ける文字列（例：users-api.）。iam のロールの権限は iam 自身の権限
+	// （users:read・users:delete など）と同じ名前の空間にあるので、操作の Authz が iam の権限と重なるなら必ず付ける。
+	// 付けないと、この API の users:delete を付与したロールが iam の管理 API のユーザーの削除もできてしまう。
+	// トークンのスコープ（リソースごとに iam に登録する）は頭を付けずに比べる。
+	PermissionPrefix string
 	// CacheTTL はイントロスペクションの結果を持つ時間。iam の session.validity_max_delay（既定30秒）以下にする。0 なら30秒。
 	CacheTTL   time.Duration
 	HTTPClient *http.Client
@@ -50,7 +57,7 @@ type Config struct {
 
 // ConfigFromEnv は環境変数から設定を読む（例のサーバーと `api sidecar` が使う）。IAM_PUBLIC_URL が無ければ false。
 //
-//	IAM_PUBLIC_URL・IAM_ADMIN_URL・IAM_CLIENT_ID・IAM_CLIENT_SECRET・IAM_ADMIN_TOKEN
+//	IAM_PUBLIC_URL・IAM_ADMIN_URL・IAM_CLIENT_ID・IAM_CLIENT_SECRET・IAM_ADMIN_TOKEN・IAM_PERMISSION_PREFIX
 func ConfigFromEnv() (Config, bool) {
 	url := os.Getenv("IAM_PUBLIC_URL")
 	if url == "" {
@@ -62,6 +69,8 @@ func ConfigFromEnv() (Config, bool) {
 		ClientID:     os.Getenv("IAM_CLIENT_ID"),
 		ClientSecret: os.Getenv("IAM_CLIENT_SECRET"),
 		AdminToken:   os.Getenv("IAM_ADMIN_TOKEN"),
+		// 頭は iam の権限の形（<リソース>:<操作>）のリソースの側に付くので、英小文字・数字・_.- だけにする。
+		PermissionPrefix: os.Getenv("IAM_PERMISSION_PREFIX"),
 	}, true
 }
 
@@ -91,6 +100,9 @@ func New(cfg Config) (*Client, error) {
 	if cfg.PublicURL == "" || cfg.AdminURL == "" || cfg.ClientID == "" || cfg.ClientSecret == "" || cfg.AdminToken == "" {
 		return nil, errors.New("iam: PublicURL, AdminURL, ClientID, ClientSecret and AdminToken are required")
 	}
+	if !validPrefix(cfg.PermissionPrefix) {
+		return nil, fmt.Errorf("iam: PermissionPrefix %q: use lowercase letters, digits, _, . and -, starting with a letter", cfg.PermissionPrefix)
+	}
 	if cfg.CacheTTL == 0 {
 		cfg.CacheTTL = 30 * time.Second
 	}
@@ -103,21 +115,36 @@ func New(cfg Config) (*Client, error) {
 	return &Client{cfg: cfg, cache: map[[32]byte]cached{}}, nil
 }
 
+// validPrefix は、頭を付けた操作が iam の権限の形（^[a-z][a-z0-9_.-]{0,63}:…）に収まり得るか。
+func validPrefix(p string) bool {
+	for i, r := range p {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case i > 0 && (r >= '0' && r <= '9' || r == '_' || r == '.' || r == '-'):
+		default:
+			return false
+		}
+	}
+	return len(p) < 64
+}
+
 // serviceAccountPrefix は iam のサービスアカウントの ID の接頭辞。
 const serviceAccountPrefix = "sva_"
 
 // introspection は RFC 7662 の応答のうち使うもの。
 type introspection struct {
-	Active    bool            `json:"active"`
-	Sub       string          `json:"sub"`
-	ClientID  string          `json:"client_id"`
-	OrgID     string          `json:"org_id"`
-	SID       string          `json:"sid"`
-	TokenType string          `json:"token_type"`
-	Exp       int64           `json:"exp"`
-	Scope     string          `json:"scope"`
-	Aud       audience        `json:"aud"`
-	Cnf       json.RawMessage `json:"cnf"`
+	Active   bool   `json:"active"`
+	Sub      string `json:"sub"`
+	ClientID string `json:"client_id"`
+	// PrincipalType は sub の主体の種類（user か service_account。iam の ADR 0120）。古い iam では無い。
+	PrincipalType string          `json:"principal_type"`
+	OrgID         string          `json:"org_id"`
+	SID           string          `json:"sid"`
+	TokenType     string          `json:"token_type"`
+	Exp           int64           `json:"exp"`
+	Scope         string          `json:"scope"`
+	Aud           audience        `json:"aud"`
+	Cnf           json.RawMessage `json:"cnf"`
 }
 
 // audience は aud（RFC 7662 では文字列か文字列の配列）。
@@ -149,8 +176,19 @@ func (r introspection) principal(token string) (p port.Principal, ok bool) {
 	}
 	p = port.Principal{Type: port.PrincipalUser, ID: r.Sub, OrgID: r.OrgID, SID: r.SID, Token: token,
 		Audiences: []string(r.Aud), Scopes: strings.Fields(r.Scope)}
-	if strings.HasPrefix(r.Sub, serviceAccountPrefix) {
-		// サービスアカウントのトークンは client_id と sub がどちらもサービスアカウントの ID。
+	sa := strings.HasPrefix(r.Sub, serviceAccountPrefix)
+	switch r.PrincipalType {
+	case "":
+	case port.PrincipalUser, port.PrincipalServiceAccount:
+		// 種類と ID の接頭辞が食い違うものは受けない。
+		if sa != (r.PrincipalType == port.PrincipalServiceAccount) {
+			return port.Principal{}, false
+		}
+	default:
+		return port.Principal{}, false
+	}
+	if sa {
+		// サービスアカウントのトークンは client_id と sub がどちらもサービスアカウントの ID。所属の Org があれば org_id（iam#190）。
 		if r.ClientID != r.Sub {
 			return port.Principal{}, false
 		}
@@ -228,18 +266,15 @@ type checkResult struct {
 }
 
 // Check は port.Authorizer の実装。主体のアクセストークンを渡し、認証の文脈は iam に組み立てさせる（attested）。
-// サービスアカウントは、iam の check が受けるまで（imohiyoko/iam#152）トークンのスコープで判定する。
+// サービスアカウントのトークンがスコープで操作を限っていれば、先にそれを確かめる（足りなければ iam を呼ばない）。
 func (c *Client) Check(ctx context.Context, r port.CheckRequest) (port.Decision, error) {
-	if r.Principal.Type == port.PrincipalServiceAccount {
-		if slices.Contains(r.Principal.Scopes, r.Action) {
-			return port.Decision{Allowed: true}, nil
-		}
+	if r.Principal.Type == port.PrincipalServiceAccount && len(r.Principal.Scopes) > 0 && !slices.Contains(r.Principal.Scopes, r.Action) {
 		return port.Decision{Allowed: false, Reasons: []string{"scope_missing"}}, nil
 	}
 	body, err := json.Marshal(checkRequest{
 		PrincipalType: r.Principal.Type,
 		PrincipalID:   r.Principal.ID,
-		Action:        r.Action,
+		Action:        c.cfg.PermissionPrefix + r.Action,
 		OrgID:         r.Principal.OrgID,
 		ResourceType:  r.ResourceType,
 		ResourceID:    r.ResourceID,

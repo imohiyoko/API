@@ -30,7 +30,18 @@ func fakeIAM(t *testing.T, introspections *atomic.Int32) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(map[string]any{"active": true, "sub": "usr_1", "org_id": "org_1", "sid": "ses_1", "token_type": "access_token", "exp": time.Now().Add(time.Hour).Unix()})
 		case "sat":
 			_ = json.NewEncoder(w).Encode(map[string]any{"active": true, "sub": "sva_1", "client_id": "sva_1", "token_type": "access_token",
+				"principal_type": "service_account", "org_id": "org_2",
 				"aud": []string{"https://users.example"}, "scope": "users:read users:list", "exp": time.Now().Add(time.Hour).Unix()})
+		case "sat-no-scope":
+			_ = json.NewEncoder(w).Encode(map[string]any{"active": true, "sub": "sva_1", "client_id": "sva_1", "principal_type": "service_account"})
+		case "sat-as-user":
+			_ = json.NewEncoder(w).Encode(map[string]any{"active": true, "sub": "sva_1", "client_id": "sva_1", "principal_type": "user"})
+		case "user-as-sat":
+			_ = json.NewEncoder(w).Encode(map[string]any{"active": true, "sub": "usr_1", "principal_type": "service_account"})
+		case "apikey":
+			_ = json.NewEncoder(w).Encode(map[string]any{"active": true, "sub": "sva_1", "token_type": "api_key", "principal_type": "service_account"})
+		case "odd-type":
+			_ = json.NewEncoder(w).Encode(map[string]any{"active": true, "sub": "usr_1", "principal_type": "robot"})
 		case "sat-one-aud":
 			_ = json.NewEncoder(w).Encode(map[string]any{"active": true, "sub": "sva_1", "client_id": "sva_1", "aud": "https://users.example"})
 		case "sat-other-client":
@@ -58,6 +69,11 @@ func fakeIAM(t *testing.T, introspections *atomic.Int32) *httptest.Server {
 		case req["principal_type"] == "user" && req["action"] == "users:read" && req["resource_id"] == "usr_1" &&
 			req["org_id"] == "org_1" && req["access_token"] == "good":
 			_ = json.NewEncoder(w).Encode(map[string]any{"allowed": true})
+		case req["principal_type"] == "service_account" && req["principal_id"] == "sva_1" && req["action"] == "users:read" &&
+			req["org_id"] == "org_2" && req["access_token"] == "sat":
+			_ = json.NewEncoder(w).Encode(map[string]any{"allowed": true})
+		case req["principal_type"] == "service_account" && req["action"] == "users:delete":
+			_ = json.NewEncoder(w).Encode(map[string]any{"allowed": false, "reasons": []string{"inactive"}})
 		default:
 			_ = json.NewEncoder(w).Encode(map[string]any{"allowed": false, "unmet": []string{"condition.amr"}})
 		}
@@ -139,27 +155,62 @@ func TestServiceAccountToken(t *testing.T) {
 	ctx := context.Background()
 
 	p, err := c.Authenticate(ctx, "sat")
-	if err != nil || p.Type != port.PrincipalServiceAccount || p.ID != "sva_1" ||
+	if err != nil || p.Type != port.PrincipalServiceAccount || p.ID != "sva_1" || p.OrgID != "org_2" || p.SID != "" ||
 		len(p.Audiences) != 1 || p.Audiences[0] != "https://users.example" || len(p.Scopes) != 2 {
 		t.Fatalf("got %+v %v", p, err)
 	}
 	if p, err := c.Authenticate(ctx, "sat-one-aud"); err != nil || len(p.Audiences) != 1 || p.Audiences[0] != "https://users.example" {
 		t.Fatalf("aud as a string: %+v %v", p, err)
 	}
-	// client_id の食い違うもの、DPoP に結び付けたもの、Personal Access Token は受けない。
-	for _, tok := range []string{"sat-other-client", "dpop", "pat"} {
+	// client_id の食い違うもの、DPoP に結び付けたもの、Personal Access Token、API キー、主体の種類が ID と食い違うか知らないものは受けない。
+	for _, tok := range []string{"sat-other-client", "dpop", "pat", "sat-as-user", "user-as-sat", "odd-type", "apikey"} {
 		if _, err := c.Authenticate(ctx, tok); !errors.Is(err, port.ErrUnauthenticated) {
 			t.Fatalf("%s: %v", tok, err)
 		}
 	}
 
-	// サービスアカウントの判定はスコープで行い、iam の check を呼ばない（imohiyoko/iam#152 まで）。
+	// サービスアカウントも iam の check で判定する（主体の種類・Org・トークンを渡す。imohiyoko/iam#152）。
 	d, err := c.Check(ctx, port.CheckRequest{Principal: p, Action: "users:read"})
 	if err != nil || !d.Allowed {
 		t.Fatalf("users:read: %+v %v", d, err)
 	}
+	// トークンのスコープに無い操作は、iam を呼ばずに拒む。
 	d, err = c.Check(ctx, port.CheckRequest{Principal: p, Action: "users:delete"})
 	if err != nil || d.Allowed || len(d.Reasons) != 1 || d.Reasons[0] != "scope_missing" {
 		t.Fatalf("users:delete: %+v %v", d, err)
+	}
+	// スコープの無いトークンは iam の判定だけで決まる。
+	q, err := c.Authenticate(ctx, "sat-no-scope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err = c.Check(ctx, port.CheckRequest{Principal: q, Action: "users:delete"})
+	if err != nil || d.Allowed || len(d.Reasons) != 1 || d.Reasons[0] != "inactive" {
+		t.Fatalf("no scope: %+v %v", d, err)
+	}
+}
+
+func TestPermissionPrefix(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		got = req["action"]
+		_ = json.NewEncoder(w).Encode(map[string]any{"allowed": true})
+	}))
+	t.Cleanup(srv.Close)
+	c, err := iam.New(iam.Config{PublicURL: srv.URL, AdminURL: srv.URL, ClientID: "rs", ClientSecret: "s", AdminToken: "a", PermissionPrefix: "users-api."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// スコープは頭を付けずに比べ、iam の check には頭を付けて渡す。
+	sa := port.Principal{Type: port.PrincipalServiceAccount, ID: "sva_1", Scopes: []string{"users:read"}}
+	if d, err := c.Check(context.Background(), port.CheckRequest{Principal: sa, Action: "users:read"}); err != nil || !d.Allowed || got != "users-api.users:read" {
+		t.Fatalf("got %+v %v, action %q", d, err, got)
+	}
+	for _, bad := range []string{"Users.", "1x", "a:b", "a b"} {
+		if _, err := iam.New(iam.Config{PublicURL: "x", AdminURL: "x", ClientID: "x", ClientSecret: "x", AdminToken: "x", PermissionPrefix: bad}); err == nil {
+			t.Errorf("%q: want an error", bad)
+		}
 	}
 }
