@@ -261,7 +261,11 @@ API に出すフィールドには `api` タグを付ける。タグの無いフ
 - 主体の種類はイントロスペクションの `principal_type`（iam の ADR 0120）で決める。ID の接頭辞（`sva_`）と食い違うもの、知らない種類は受けない
 - 受けないもの：管理 API 向けのトークンと API キー（iam が `active: false` を返す。iam のフィーチャー `api_key_introspection` で API キーを確かめられるようになったが、API キーは向け先（`aud`）を持たず口を分けられないので受けない）、リフレッシュトークン、Personal Access Token、DPoP・mTLS に結び付けたトークン（`cnf`。結び付けを確かめないので拒む）
 
-操作の名前の空間：iam のロールの権限は、iam 自身の管理の権限（`users:read`・`users:delete` など）と同じ空間にある。`Authz` の操作が iam の権限と重なると、この API 向けに付与したロールで iam の管理 API も使えてしまう。そのため `iam.Config.PermissionPrefix`（環境変数 `IAM_PERMISSION_PREFIX`、例：`users-api.`）を付けて check に渡し、ロールにもその名前で登録する（例：`users-api.users:read`）。トークンのスコープはリソースごとなので頭を付けない。
+操作の名前の空間：iam のロールの権限は、iam 自身の管理の権限（`users:read`・`users:delete` など）と、連携先の権限（`<接頭辞>.<リソース>:<操作>`）に分かれる（iam の ADR 0121）。連携先の権限は、iam に登録した**権限のカタログ**にあるものだけが使える。
+
+- `iam.Config.PermissionCatalog`（環境変数 `IAM_PERMISSION_CATALOG`、例：`users-api`）は必須。check には `<カタログ>.<Authz の操作>`（例：`users-api.users:read`）を渡し、ロールにもこの名前で入れる。トークンのスコープはリソースごとの OAuth のスコープなので接頭辞を付けない
+- カタログの中身は定義から書き出す：`api -manifest … iam-catalog -prefix users-api` が `POST /v1/admin/permission-catalogs` の本体を出す（権限は操作の `Authz` の一覧、説明はそれを求める操作の名前）。`Authz` の操作が iam の権限の形（小文字の `<リソース>:<操作>`）に合わなければエラー
+- `AdminToken` には、realm 全体ではなくこのカタログの `authz:check`（`resource_type: permission_catalog`、`resource_id`: 接頭辞）だけを付与したサービスアカウントを使う。ほかの API の権限や iam 自身の権限は問い合わせられない
 
 iam のリソースに `introspection_clients`（iam の ADR 0120）でこの API の連携先を登録すれば、ほかの連携先にはこのリソースに向けたトークンを確かめさせない。
 
@@ -276,6 +280,7 @@ iam を起動した E2E は `scripts/e2e-iam.sh`（CI）。
 | [iam#152](https://github.com/imohiyoko/iam/issues/152) | `authz:check` の主体にサービスアカウント | internal・partner の認可 | 使える |
 | [iam#153](https://github.com/imohiyoko/iam/issues/153) | 複数の判定をまとめる batch check | GraphQL・一覧 | iam にある（`authz:batch-check`）。使うのは M4 |
 | [iam#154](https://github.com/imohiyoko/iam/issues/154) | アクセストークンを対象の API に限る（RFC 8707） | 公開範囲をまたぐトークンの持ち込みを防ぐ | 使える（口の `Resource`。iam の側でも `introspection_clients` で限れる） |
+| [iam#195](https://github.com/imohiyoko/iam/issues/195) | iam 自身の権限と連携先の権限の名前空間を分ける | 操作の権限が iam の管理の権限と重ならない | 使える（iam の ADR 0121。権限のカタログ） |
 | [iam#190](https://github.com/imohiyoko/iam/issues/190) | サービスアカウントのトークンのイントロスペクションに `org_id` | partner（Org ごとの受け付けとレートリミット） | 使える |
 
 ## 7. 未決事項

@@ -10,7 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 root=$(pwd)
 
-IAM_REF=${IAM_REF:-98d6ace66ca43b21f7c247e12e2bf83b33ee057a}
+IAM_REF=${IAM_REF:-0e8590dd67d76cef2ca6c318c7e94f1e29b8e71c}
 work=$(mktemp -d)
 trap 'kill "${iam_pid:-}" "${api_pid:-}" 2>/dev/null || true; rm -rf "$work"' EXIT
 
@@ -22,6 +22,7 @@ if [ -z "${IAM_SRC:-}" ]; then
 fi
 (cd "$IAM_SRC" && go build -o "$work/iam" ./cmd/iam)
 go build -o "$work/users" ./examples/users/cmd/users
+go build -o "$work/api" ./cmd/api
 
 public=http://localhost:18080
 admin=http://127.0.0.1:18081
@@ -80,7 +81,14 @@ client_id=$(json '["client_id"]' <<<"$client")
 owner_user=$(adm /v1/admin/users '{"email":"owner@partner.example"}' | json '["user_id"]')
 org=$(adm /v1/admin/orgs "{\"name\":\"partner\",\"owner_id\":\"$owner_user\"}" | json '["id"]')
 
-# 操作の権限は iam のロールで付与する（authz:check。iam#152）。iam 自身の権限（users:read など）と重ならないよう頭を付ける。
+# 操作の権限は、マニフェストから書き出した iam の権限のカタログ（iam の ADR 0121）に載せ、ロールで付与する（authz:check。iam#152）。
+"$work/api" -manifest "$root/examples/users/api/manifest.yaml" iam-catalog -prefix users-api >catalog.json
+adm /v1/admin/permission-catalogs "$(cat catalog.json)" >/dev/null
+# 判定を問い合わせるサービスアカウントには、このカタログの authz:check だけを渡す（realm 全体の判定はさせない）。
+checker_role=$(adm /v1/admin/roles '{"name":"users-api-checker","permissions":["authz:check"]}' | json '["id"]')
+read -r checker_id _ < <(service_account users-api-checker)
+adm /v1/admin/role-bindings "{\"role\":\"$checker_role\",\"principal_type\":\"service_account\",\"principal_id\":\"$checker_id\",\"resource_type\":\"permission_catalog\",\"resource_id\":\"users-api\"}" >/dev/null
+checker_key=$(adm "/v1/admin/service-accounts/$checker_id/credentials" '{"type":"api_key"}' | json '["secret"]')
 editor=$(adm /v1/admin/roles '{"name":"users-editor","permissions":["users-api.users:read","users-api.users:list","users-api.users:create","users-api.users:delete"]}' | json '["id"]')
 reader=$(adm /v1/admin/roles '{"name":"users-reader","permissions":["users-api.users:read","users-api.users:list"]}' | json '["id"]')
 read -r internal_id internal_secret < <(service_account internal-caller)
@@ -109,7 +117,7 @@ no_org_partner=$(token "$internal_id" "$internal_secret" https://users.partner "
 
 IAM_PUBLIC_URL=$public IAM_ADMIN_URL=$admin \
   IAM_CLIENT_ID=$client_id IAM_CLIENT_SECRET=$(json '["client_secret"]' <<<"$client") \
-  IAM_ADMIN_TOKEN=$owner IAM_PERMISSION_PREFIX=users-api. IAM_RESOURCE_INTERNAL=https://users.internal IAM_RESOURCE_PUBLIC=https://users.example \
+  IAM_ADMIN_TOKEN=$checker_key IAM_PERMISSION_CATALOG=users-api IAM_RESOURCE_INTERNAL=https://users.internal IAM_RESOURCE_PARTNER=https://users.partner IAM_RESOURCE_PUBLIC=https://users.example \
   ./users serve >users.log 2>&1 &
 api_pid=$!
 # HTTP の口は別の goroutine で待ち受けるので、ログではなく3つの口すべてに繋がるまで待つ。
@@ -144,6 +152,7 @@ grep -q '"email"' "$work/body" && ! grep -q '"note"' "$work/body" || { echo "FAI
 expect "partner without an Org" 403 GET "$partner/users/usr_1" "$no_org_partner"
 grep -q principal_not_allowed "$work/body" || { echo "FAIL: reason: $(cat "$work/body")"; exit 1; }
 expect "partner token on internal" 401 GET "$internal/users/usr_1" "$partner_read"
+expect "internal token on partner" 401 GET "$partner/users/usr_1" "$internal_read"
 expect "public token on internal" 401 GET "$internal/users/usr_1" "$public_read"
 expect "internal token on public" 401 GET "$pub/users/usr_1" "$internal_all"
 expect "get on public" 200 GET "$pub/users/usr_1" "$public_read"

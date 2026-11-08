@@ -43,11 +43,12 @@ type Config struct {
 	ClientSecret string
 	// AdminToken は、権限 authz:check を持つサービスアカウントの API キーかアクセストークン。
 	AdminToken string
-	// PermissionPrefix は authz:check に渡す操作の頭に付ける文字列（例：users-api.）。iam のロールの権限は iam 自身の権限
-	// （users:read・users:delete など）と同じ名前の空間にあるので、操作の Authz が iam の権限と重なるなら必ず付ける。
-	// 付けないと、この API の users:delete を付与したロールが iam の管理 API のユーザーの削除もできてしまう。
-	// トークンのスコープ（リソースごとに iam に登録する）は頭を付けずに比べる。
-	PermissionPrefix string
+	// PermissionCatalog は、この API の操作を載せた iam の権限のカタログの接頭辞（例：users-api。iam の ADR 0121）。必須。
+	// authz:check には `<接頭辞>.<操作の Authz>`（例：users-api.users:read）を渡す。iam 自身の権限（users:read など）とは
+	// 字面で分かれ、iam のロールにもこの名前で入れる。カタログの中身は `api iam-catalog` でマニフェストから書き出せる。
+	// AdminToken には、realm 全体ではなくこのカタログの authz:check だけを渡せばよい。
+	// トークンのスコープ（リソースごとに iam に登録する OAuth のスコープ）は接頭辞を付けずに比べる。
+	PermissionCatalog string
 	// CacheTTL はイントロスペクションの結果を持つ時間。iam の session.validity_max_delay（既定30秒）以下にする。0 なら30秒。
 	CacheTTL   time.Duration
 	HTTPClient *http.Client
@@ -57,20 +58,19 @@ type Config struct {
 
 // ConfigFromEnv は環境変数から設定を読む（例のサーバーと `api sidecar` が使う）。IAM_PUBLIC_URL が無ければ false。
 //
-//	IAM_PUBLIC_URL・IAM_ADMIN_URL・IAM_CLIENT_ID・IAM_CLIENT_SECRET・IAM_ADMIN_TOKEN・IAM_PERMISSION_PREFIX
+//	IAM_PUBLIC_URL・IAM_ADMIN_URL・IAM_CLIENT_ID・IAM_CLIENT_SECRET・IAM_ADMIN_TOKEN・IAM_PERMISSION_CATALOG
 func ConfigFromEnv() (Config, bool) {
 	url := os.Getenv("IAM_PUBLIC_URL")
 	if url == "" {
 		return Config{}, false
 	}
 	return Config{
-		PublicURL:    url,
-		AdminURL:     os.Getenv("IAM_ADMIN_URL"),
-		ClientID:     os.Getenv("IAM_CLIENT_ID"),
-		ClientSecret: os.Getenv("IAM_CLIENT_SECRET"),
-		AdminToken:   os.Getenv("IAM_ADMIN_TOKEN"),
-		// 頭は iam の権限の形（<リソース>:<操作>）のリソースの側に付くので、英小文字・数字・_.- だけにする。
-		PermissionPrefix: os.Getenv("IAM_PERMISSION_PREFIX"),
+		PublicURL:         url,
+		AdminURL:          os.Getenv("IAM_ADMIN_URL"),
+		ClientID:          os.Getenv("IAM_CLIENT_ID"),
+		ClientSecret:      os.Getenv("IAM_CLIENT_SECRET"),
+		AdminToken:        os.Getenv("IAM_ADMIN_TOKEN"),
+		PermissionCatalog: os.Getenv("IAM_PERMISSION_CATALOG"),
 	}, true
 }
 
@@ -97,11 +97,11 @@ type cached struct {
 
 // New は Client を作る。
 func New(cfg Config) (*Client, error) {
-	if cfg.PublicURL == "" || cfg.AdminURL == "" || cfg.ClientID == "" || cfg.ClientSecret == "" || cfg.AdminToken == "" {
-		return nil, errors.New("iam: PublicURL, AdminURL, ClientID, ClientSecret and AdminToken are required")
+	if cfg.PublicURL == "" || cfg.AdminURL == "" || cfg.ClientID == "" || cfg.ClientSecret == "" || cfg.AdminToken == "" || cfg.PermissionCatalog == "" {
+		return nil, errors.New("iam: PublicURL, AdminURL, ClientID, ClientSecret, AdminToken and PermissionCatalog are required")
 	}
-	if !validPrefix(cfg.PermissionPrefix) {
-		return nil, fmt.Errorf("iam: PermissionPrefix %q: use lowercase letters, digits, _, . and -, starting with a letter", cfg.PermissionPrefix)
+	if !ValidCatalogPrefix(cfg.PermissionCatalog) {
+		return nil, fmt.Errorf("iam: PermissionCatalog %q: use 1-32 lowercase letters, digits and -, starting with a letter", cfg.PermissionCatalog)
 	}
 	if cfg.CacheTTL == 0 {
 		cfg.CacheTTL = 30 * time.Second
@@ -113,19 +113,6 @@ func New(cfg Config) (*Client, error) {
 		cfg.Now = time.Now
 	}
 	return &Client{cfg: cfg, cache: map[[32]byte]cached{}}, nil
-}
-
-// validPrefix は、頭を付けた操作が iam の権限の形（^[a-z][a-z0-9_.-]{0,63}:…）に収まり得るか。
-func validPrefix(p string) bool {
-	for i, r := range p {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case i > 0 && (r >= '0' && r <= '9' || r == '_' || r == '.' || r == '-'):
-		default:
-			return false
-		}
-	}
-	return len(p) < 64
 }
 
 // serviceAccountPrefix は iam のサービスアカウントの ID の接頭辞。
@@ -274,7 +261,7 @@ func (c *Client) Check(ctx context.Context, r port.CheckRequest) (port.Decision,
 	body, err := json.Marshal(checkRequest{
 		PrincipalType: r.Principal.Type,
 		PrincipalID:   r.Principal.ID,
-		Action:        c.cfg.PermissionPrefix + r.Action,
+		Action:        Permission(c.cfg.PermissionCatalog, r.Action),
 		OrgID:         r.Principal.OrgID,
 		ResourceType:  r.ResourceType,
 		ResourceID:    r.ResourceID,

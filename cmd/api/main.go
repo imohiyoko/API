@@ -3,6 +3,7 @@
 //
 //	api -manifest api/manifest.yaml check
 //	api -manifest api/manifest.yaml gen -out api
+//	api -manifest api/manifest.yaml iam-catalog -prefix users-api > catalog.json
 //	api -manifest api/manifest.yaml sidecar -upstream http://127.0.0.1:3000 -listen internal=127.0.0.1:8090,public=:8092
 package main
 
@@ -29,8 +30,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	if args := flag.Args(); len(args) > 0 && args[0] == "sidecar" {
-		os.Exit(sidecarMain(m, args[1:]))
+	if args := flag.Args(); len(args) > 0 {
+		switch args[0] {
+		case "sidecar":
+			os.Exit(sidecarMain(m, args[1:]))
+		case "iam-catalog":
+			os.Exit(iamCatalogMain(m, args[1:]))
+		}
 	}
 	os.Exit(cli.Run(m, flag.Args(), os.Stdout, os.Stderr))
 }
