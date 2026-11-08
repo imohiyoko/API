@@ -10,7 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 root=$(pwd)
 
-IAM_REF=${IAM_REF:-516228fe81348753893673d979b42867c222725a}
+IAM_REF=${IAM_REF:-0e8590dd67d76cef2ca6c318c7e94f1e29b8e71c}
 work=$(mktemp -d)
 trap 'kill "${iam_pid:-}" "${api_pid:-}" 2>/dev/null || true; rm -rf "$work"' EXIT
 
