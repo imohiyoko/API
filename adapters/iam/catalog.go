@@ -14,8 +14,9 @@ import (
 // iam の権限の名前の形（iam の ADR 0121）。
 var (
 	catalogPrefixRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
-	// actionRE は接頭辞の後ろ（<リソース>:<操作>）の形。
-	actionRE = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,63}:(\*|[a-z0-9_.-]{1,64})$`)
+	// actionRE は接頭辞の後ろ（<リソース>:<操作>）の形。操作の `*` はロールに入れる書き方で、カタログには登録できず、
+	// 1つの操作が求める権限にもならないので受けない。
+	actionRE = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,63}:[a-z0-9_.-]{1,64}$`)
 )
 
 // ValidCatalogPrefix は iam の権限のカタログの接頭辞の形か。

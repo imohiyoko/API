@@ -32,8 +32,10 @@ func TestCatalogFromManifest(t *testing.T) {
 	if _, err := iam.CatalogFromManifest(m, "Users", ""); err == nil {
 		t.Error("bad prefix: want an error")
 	}
-	bad := &manifest.Manifest{Operations: []manifest.Operation{{Name: "x.y", Authz: &manifest.Authz{Action: "Users:Read"}}}}
-	if _, err := iam.CatalogFromManifest(bad, "x", ""); err == nil || !strings.Contains(err.Error(), "x.y") {
-		t.Errorf("bad action: %v", err)
+	for _, a := range []string{"Users:Read", "users:*", "users"} {
+		bad := &manifest.Manifest{Operations: []manifest.Operation{{Name: "x.y", Authz: &manifest.Authz{Action: a}}}}
+		if _, err := iam.CatalogFromManifest(bad, "x", ""); err == nil || !strings.Contains(err.Error(), "x.y") {
+			t.Errorf("%q: %v", a, err)
+		}
 	}
 }
