@@ -43,6 +43,23 @@ Go の定義 ──書き出し──▶ マニフェスト（JSON / YAML。言�
   - **ライブラリ**：Go のサービスに組み込む。ハンドラーは Go の関数
   - **サイドカー**：Go 以外のサービスの隣で動く。認証・認可・プロトコルの変換・フィールドの絞り込みをして、本体のハンドラーには単純な HTTP（JSON）で渡す
 - 必要になれば、ほかの言語の薄いライブラリをマニフェストの上に足す
+- ライブラリの口は、プロトコルの口（REST・gRPC など）と、プロセス内の口（`Server.Invoke`）。どれも同じ共通の層（認証 → 主体の確認 → レートリミット → 入力 → 認可 → 実行 → 出力の絞り込み）を通る（ADR 0007）
+
+#### プロセス内の口（`Server.Invoke`）
+
+```go
+out, err := srv.Invoke(ctx, define.Internal, "agent.new", token, in)
+```
+
+- 短命の CLI（1回ごとに別プロセス）、テスト、操作から別の操作を呼ぶとき、バッチのための口。HTTP の口を立てずに、REST と同じ認証・認可・検証を通して呼ぶ
+- 公開範囲は必ず渡す（既定は無い）。その公開範囲に `Expose` していない操作は、REST と同じく `not_found`。どのプロトコルで出しているかは問わない
+- 認証はトークンで行う（`port.Authenticator` に渡す）。確かめ済みの主体を直接渡す形は、認証を飛ばす道になるので作らない。空のトークンは、トークンの無い呼び出し（`Anonymous` の操作だけ通る）
+- 入力は操作の In 型の値（ポインターも可）か JSON のオブジェクト（`json.RawMessage`・`[]byte`）
+  - JSON は REST の本文と同じ規則で検証する（パス・クエリのフィールドも同じオブジェクトに入れる）。必須のフィールドが無ければ `invalid_argument`
+  - Go の値では、公開範囲に見えないフィールドは無いものとして扱い、nil のポインターは省略と同じ。ポインターでないフィールドはゼロ値でもあるものとする（gRPC と同じ）
+- 出力は公開範囲に見えるフィールドだけの値（`define.Encode` の結果。object は `map[string]any`）。エラーは `*define.Error` で、メッセージと理由は REST と同じ開示のルール（4.1）に従う
+- 匿名の呼び出しのレートリミットは、プロセス内の呼び出しをまとめて数える（`runtime.InvokeClient`）
+- プロトコルの口を足すときは `Server.Serve`（`runtime.Request`：トークン・接続元・フィールドの名前 → JSON の値）を使う。gRPC の口（`runtime/grpcx`）もこの上にある
 
 #### サイドカー（`api sidecar`、`sidecar/`）
 
@@ -64,8 +81,10 @@ api -manifest api/manifest.yaml sidecar -upstream http://127.0.0.1:3000 \
 ```
 api/
 ├── define/      # 定義の DSL（Go）、入力の組み立てと出力の絞り込み
-├── manifest/    # マニフェストの型、読み書き、検査（4.3）、REST・gRPC の規則（5.1）
-├── runtime/     # 共通の層（検証・認証・認可・エラーの開示）と公開範囲ごとの口（REST・gRPC）
+├── manifest/    # マニフェストの型、JSON の読み書き、検査（4.3）、REST・gRPC の規則（5.1）
+│   └── yamlx/   # YAML のマニフェストの読み込み
+├── runtime/     # 共通の層（検証・認証・認可・エラーの開示）と公開範囲ごとの口（REST・Invoke）
+│   └── grpcx/   # gRPC の口
 ├── gen/         # 契約ファイルの生成（openapi/ proto/。今後 sdl/ asyncapi/）
 ├── scripts/     # E2E（e2e-grpc.sh・e2e-iam.sh・e2e-sidecar.sh）
 ├── port/        # Authenticator・Authorizer など外部依存のポート
@@ -79,8 +98,8 @@ api/
 ```
 
 - コア（`define`・`manifest`・`runtime`・`port`・`gen`・`cli`・`sidecar`）は `adapters/` を import しない（`internal/archtest` で検査）
-- Go 1.26 以上（grpc-go が求める版）。依存は grpc-go・protobuf と、YAML のマニフェストを読む go.yaml.in/yaml/v3 だけ。REST だけを使う利用者も、この3つをビルドに含む
-- プロトコルとアダプタは、使うものだけをビルドに含められるよう別パッケージにする
+- Go 1.26 以上（grpc-go が求める版）。依存は grpc-go・protobuf と、YAML のマニフェストを読む go.yaml.in/yaml/v3 だけ
+- プロトコルとアダプタは、使うものだけをビルドに含められるよう別パッケージにする。コアの依存にも当てはめ、grpc-go・protobuf は `runtime/grpcx` と `gen/proto`、YAML は `manifest/yamlx` だけが import する。`define`・`manifest`・`runtime`・`port` だけを使う利用者（REST と Invoke だけ）のビルドには、この3つが入らない（`internal/archtest` で、import と `examples/users/cmd/users-rest` の `go list -deps` を検査する）。`cli` と `cmd/api` は gRPC の契約を生成するので grpc・protobuf を含む
 
 ## 3. 定義
 
@@ -113,7 +132,7 @@ type User struct {
 }
 ```
 
-- 定義はレジストリに集め、`runtime.Build(registry, config)` が公開範囲ごとの口を作る。`Server.Handler(公開範囲)` が REST の `http.Handler`、`Server.GRPCServer(公開範囲)` が gRPC の `*grpc.Server`
+- 定義はレジストリに集め、`runtime.Build(registry, config)` が公開範囲ごとの口を作る。`Server.Handler(公開範囲)` が REST の `http.Handler`、`grpcx.Server(srv, 公開範囲)` が gRPC の `*grpc.Server`、`Server.Invoke(ctx, 公開範囲, 操作の名前, トークン, 入力)` がプロセス内の口（2.2）
 - レジストリには API の名前を付けられる（`define.NewRegistry(define.WithName("users"))`、マニフェストの `name`）。gRPC のパッケージ名は「API の名前.公開範囲」（例：`users.internal`）。省略すると `api`
 - 利用者の main から `cli.Main(registry, args)` を呼ぶと、`check`・`manifest`・`gen` が使える。`gen` は `manifest.json` と、公開範囲ごとの `openapi/<公開範囲>.json`（REST）・`proto/<公開範囲>.proto`（gRPC）を書き出す。そのプロトコルで何も出さない公開範囲のファイルは作らず、前に作ったものは消す。`cmd/api` は同じことをマニフェストのファイルから行う
 
@@ -227,6 +246,7 @@ API に出すフィールドには `api` タグを付ける。タグの無いフ
 
 #### gRPC
 
+- 口は `runtime/grpcx`（`grpcx.Server(srv, 公開範囲)`）。gRPC を使う利用者だけが import する（2.3）
 - `.proto` と実際の口は、同じ記述子（`gen/proto`）から作るので食い違わない。生成コードは要らず、要求・応答は `dynamicpb` で組み立てる
 - 入力の場所（path・query・body）は gRPC には無いので、すべてのフィールドを要求のメッセージに入れる
 - 型：文字列 → `string`、真偽値 → `bool`、整数 → `int32`・`int64`、浮動小数点数 → `float`・`double`、`time.Time` → `google.protobuf.Timestamp`、`[]byte` → `bytes`、スライス → `repeated`、struct → 入れ子のメッセージ（名前はフィールド名の PascalCase）。省略できるスカラーは proto3 の `optional`

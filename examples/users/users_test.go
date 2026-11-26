@@ -7,6 +7,7 @@ import (
 
 	"github.com/imohiyoko/API/examples/users"
 	"github.com/imohiyoko/API/manifest"
+	"github.com/imohiyoko/API/manifest/yamlx"
 )
 
 // roadmap.md M3：YAML で書いたマニフェストと、同じ内容を Go で書いた定義の書き出しが一致する。
@@ -20,7 +21,7 @@ func TestYAMLManifestMatchesGoDefinition(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	fromYAML, err := manifest.ReadFile("api/manifest.yaml", f)
+	fromYAML, err := yamlx.ReadFile("api/manifest.yaml", f)
 	if err != nil {
 		t.Fatal(err)
 	}

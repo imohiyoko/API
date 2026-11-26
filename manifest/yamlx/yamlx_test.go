@@ -1,14 +1,14 @@
-package manifest_test
+package yamlx_test
 
 import (
 	"strings"
 	"testing"
 
-	"github.com/imohiyoko/API/manifest"
+	"github.com/imohiyoko/API/manifest/yamlx"
 )
 
-func TestReadYAML(t *testing.T) {
-	m, err := manifest.ReadFile("m.yaml", strings.NewReader(`
+func TestRead(t *testing.T) {
+	m, err := yamlx.ReadFile("m.yaml", strings.NewReader(`
 version: api.manifest/v0
 name: things
 operations:
@@ -32,7 +32,7 @@ operations:
 		"non-string keys": "version: api.manifest/v0\noperations: []\n1: x\n",
 		"not yaml":        "version: [\n",
 	} {
-		if _, err := manifest.ReadYAML(strings.NewReader(src)); err == nil {
+		if _, err := yamlx.Read(strings.NewReader(src)); err == nil {
 			t.Errorf("%s: want an error", name)
 		}
 	}

@@ -21,10 +21,18 @@ reg := define.NewRegistry(define.WithName("users")).Add(getUser)
 srv, err := runtime.Build(reg, runtime.Config{Authenticator: iamClient, Authorizer: iamClient})
 // 公開範囲・プロトコルごとに別の listener
 go func() { log.Fatal(http.ListenAndServe(":8092", srv.Handler(define.Public))) }()
-gs, err := srv.GRPCServer(define.Internal) // 同じ定義の gRPC（users.internal.Users/Get）
+gs, err := grpcx.Server(srv, define.Internal) // 同じ定義の gRPC（users.internal.Users/Get。runtime/grpcx）
 lis, err := net.Listen("tcp", "127.0.0.1:9090")
 log.Fatal(gs.Serve(lis))
 ```
+
+CLI やテストからは、HTTP の口を立てずにプロセス内で呼べる。認証・認可・検証・出力の絞り込みは REST と同じ。
+
+```go
+out, err := srv.Invoke(ctx, define.Internal, "users.get", token, GetUserIn{ID: "usr_1"}) // err は *define.Error
+```
+
+gRPC は `runtime/grpcx`、YAML のマニフェストは `manifest/yamlx` にある。REST と Invoke だけを使うなら、ビルドに grpc-go・protobuf・YAML のライブラリは入らない（例：[examples/users/cmd/users-rest](examples/users/cmd/users-rest)）。
 
 例は [examples/users](examples/users)。生成した契約ファイルは [examples/users/api](examples/users/api)。
 

@@ -16,10 +16,10 @@ import (
 	"github.com/imohiyoko/API/manifest"
 )
 
-// maxBody は本文の上限。
-const maxBody = 1 << 20
+// MaxBody は本文（gRPC ではメッセージ）の上限。
+const MaxBody = 1 << 20
 
-func newRESTHandler(m *manifest.Manifest, aud string, ac AudienceConfig, ops map[string]define.Operation, cfg Config) http.Handler {
+func newRESTHandler(m *manifest.Manifest, aud string, calls map[string]*opCall) http.Handler {
 	mux := http.NewServeMux()
 	for i := range m.Operations {
 		spec := &m.Operations[i]
@@ -27,14 +27,13 @@ func newRESTHandler(m *manifest.Manifest, aud string, ac AudienceConfig, ops map
 			continue
 		}
 		method, path, _ := spec.ResolveHTTP() // Check 済み
-		h := &restOp{opCall{m: m, aud: aud, ac: ac, spec: spec, op: ops[spec.Name], cfg: cfg}}
-		mux.Handle(method+" "+path, h)
+		mux.Handle(method+" "+path, &restOp{calls[spec.Name]})
 	}
 	return mux
 }
 
 type restOp struct {
-	opCall
+	*opCall
 }
 
 func (h *restOp) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -44,8 +43,8 @@ func (h *restOp) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, define.Errorf(define.CodeInternal, "handler panicked"))
 		}
 	}()
-	token, hasToken := bearer(r.Header.Get("Authorization"))
-	body, err := h.run(r.Context(), token, hasToken, clientHost(r.RemoteAddr), &restSource{r: r, m: h.m, aud: h.aud, needBody: hasBody(h.spec)})
+	token, hasToken := Bearer(r.Header.Get("Authorization"))
+	body, err := h.run(r.Context(), token, hasToken, ClientHost(r.RemoteAddr), &restSource{r: r, m: h.m, aud: h.aud, needBody: hasBody(h.spec)})
 	if err != nil {
 		h.writeError(w, err)
 		return
@@ -61,15 +60,14 @@ type errorBody struct {
 }
 
 func (h *restOp) writeError(w http.ResponseWriter, err error) {
-	e := h.failure(err)
-	msg, reasons := h.disclose(e)
+	e := h.public(err)
 	if e.Code == define.CodeUnauthenticated {
 		w.Header().Set("WWW-Authenticate", "Bearer")
 	}
 	if e.RetryAfter > 0 {
 		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(e.RetryAfter.Seconds()))))
 	}
-	writeJSON(w, define.HTTPStatus(e.Code), errorBody{Error: string(e.Code), Message: msg, Reasons: reasons})
+	writeJSON(w, define.HTTPStatus(e.Code), errorBody{Error: string(e.Code), Message: e.Message, Reasons: e.Reasons})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -78,8 +76,8 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// bearer は Authorization の値から Bearer のトークンを取り出す。
-func bearer(h string) (string, bool) {
+// Bearer は Authorization の値（HTTP のヘッダー、gRPC の metadata）から Bearer のトークンを取り出す。
+func Bearer(h string) (string, bool) {
 	scheme, token, ok := strings.Cut(h, " ")
 	if !ok || !strings.EqualFold(scheme, "Bearer") || token == "" {
 		return "", false
@@ -114,11 +112,11 @@ func (s *restSource) Body() (map[string]json.RawMessage, error) {
 		return s.body, nil
 	}
 	s.read = true
-	raw, err := io.ReadAll(io.LimitReader(s.r.Body, maxBody+1))
+	raw, err := io.ReadAll(io.LimitReader(s.r.Body, MaxBody+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(raw) > maxBody {
+	if len(raw) > MaxBody {
 		return nil, errors.New("too large")
 	}
 	if len(strings.TrimSpace(string(raw))) == 0 {
@@ -138,8 +136,8 @@ func (s *restSource) Body() (map[string]json.RawMessage, error) {
 	return s.body, nil
 }
 
-// clientHost はアドレスからポートを除く。
-func clientHost(addr string) string {
+// ClientHost は接続元のアドレスからポートを除く（匿名の呼び出しのレートリミットの単位）。
+func ClientHost(addr string) string {
 	if h, _, err := net.SplitHostPort(addr); err == nil {
 		return h
 	}

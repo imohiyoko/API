@@ -17,6 +17,7 @@ import (
 	"github.com/imohiyoko/API/adapters/memory"
 	"github.com/imohiyoko/API/manifest"
 	"github.com/imohiyoko/API/runtime"
+	"github.com/imohiyoko/API/runtime/grpcx"
 	"github.com/imohiyoko/API/sidecar"
 )
 
@@ -96,7 +97,7 @@ func sidecarMain(m *manifest.Manifest, args []string) int {
 	defer stop()
 	errs := make(chan error, len(rest)+len(grpcAddrs))
 	for aud := range rest {
-		// 知らない公開範囲の口は、すべての要求に 404 を返すだけになる。起動の前に止める（gRPC は GRPCServer が拒む）。
+		// 知らない公開範囲の口は、すべての要求に 404 を返すだけになる。起動の前に止める（gRPC は grpcx.Server が拒む）。
 		if m.Rank(aud) < 0 {
 			fmt.Fprintf(os.Stderr, "sidecar: unknown audience %q in -listen\n", aud)
 			return 2
@@ -124,7 +125,7 @@ func sidecarMain(m *manifest.Manifest, args []string) int {
 		go func() { <-ctx.Done(); _ = s.Close() }()
 	}
 	for aud, addr := range grpcAddrs {
-		gs, err := srv.GRPCServer(aud)
+		gs, err := grpcx.Server(srv, aud)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1

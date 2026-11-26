@@ -18,3 +18,4 @@
 | [0004](0004-iam-via-ports.md) | 認証・認可は iam にポート経由で任せる | 承認 |
 | [0005](0005-closed-by-default.md) | 公開範囲ごとに口と契約を分け、既定は公開しない | 承認 |
 | [0006](0006-protocol-order.md) | プロトコルは REST と gRPC から始め、SOAP は最後にする | 承認 |
+| [0007](0007-in-process-call-and-optional-protocols.md) | プロセス内から操作を呼ぶ口を足し、gRPC・YAML は使う利用者だけが含めるパッケージに分ける | 承認 |

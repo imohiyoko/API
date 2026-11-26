@@ -13,7 +13,7 @@ import (
 	"os"
 
 	"github.com/imohiyoko/API/cli"
-	"github.com/imohiyoko/API/manifest"
+	"github.com/imohiyoko/API/manifest/yamlx"
 )
 
 func main() {
@@ -24,7 +24,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	m, err := manifest.ReadFile(*path, f)
+	m, err := yamlx.ReadFile(*path, f)
 	f.Close()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
