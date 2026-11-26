@@ -208,8 +208,10 @@ func isCode(err error, code define.Code) bool {
 func TestInvokeRejectsMultiplePathValues(t *testing.T) {
 	srv := parityServer(t)
 	body := `{"id":["t1","missing"],"tags":[],"at":"2026-11-02T00:00:00Z","address":{"city":"x"},"count":1}`
-	if _, err := srv.Invoke(context.Background(), "public", "things.update", "user", json.RawMessage(body)); !isCode(err, define.CodeInvalidArgument) {
-		t.Errorf("two ids: got %v", err)
+	_, err := srv.Invoke(context.Background(), "public", "things.update", "user", json.RawMessage(body))
+	var e *define.Error
+	if !errors.As(err, &e) || e.Code != define.CodeInvalidArgument || e.Message != "id: given more than once" {
+		t.Errorf("two ids: got %#v", err)
 	}
 	one := `{"id":["t1"],"tags":[],"at":"2026-11-02T00:00:00Z","address":{"city":"x"},"count":1}`
 	if _, err := srv.Invoke(context.Background(), "public", "things.update", "user", json.RawMessage(one)); err != nil {

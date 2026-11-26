@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"slices"
 
 	"github.com/imohiyoko/API/define"
@@ -192,7 +191,7 @@ func newFieldsSource(c *opCall, req Request) *fieldsSource {
 			// パスの引数は1つの値。配列なら、先頭だけを使わずに誤りにする（クエリなら decodeInput が「given more than once」で拒む）。
 			var arr []json.RawMessage
 			if json.Unmarshal(v, &arr) == nil && len(arr) != 1 {
-				s.err = fmt.Errorf("%s: must be a single value", name)
+				s.err = define.Errorf(define.CodeInvalidArgument, "%s: given more than once", name)
 			}
 		}
 		if i >= 0 && c.spec.Input.Fields[i].In != "body" {
