@@ -19,6 +19,11 @@ func PrincipalFrom(ctx context.Context) (port.Principal, bool) {
 	return p, ok
 }
 
+// WithoutPrincipal は ctx から主体を外す。トークンの無い呼び出しで、呼び出し元（Invoke を呼んだ操作など）の主体を引き継がないよう runtime が使う。
+func WithoutPrincipal(ctx context.Context) context.Context {
+	return context.WithValue(ctx, principalKey{}, nil)
+}
+
 type audienceKey struct{}
 
 // WithAudience は ctx に要求を受けた公開範囲を入れる。runtime が使う。

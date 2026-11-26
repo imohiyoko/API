@@ -8,8 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imohiyoko/API/adapters/memory"
 	"github.com/imohiyoko/API/define"
 	"github.com/imohiyoko/API/examples/users"
+	"github.com/imohiyoko/API/port"
+	"github.com/imohiyoko/API/runtime"
 )
 
 // invokeOutcome は Invoke の結果を、REST の結果（restOutcome）と比べられる形にする。
@@ -199,4 +202,38 @@ func TestInvokeAuthentication(t *testing.T) {
 func isCode(err error, code define.Code) bool {
 	var e *define.Error
 	return errors.As(err, &e) && e.Code == code
+}
+
+// パスの引数に複数の値を渡すと、先頭だけを使わずに拒む。
+func TestInvokeRejectsMultiplePathValues(t *testing.T) {
+	srv := parityServer(t)
+	body := `{"id":["t1","missing"],"tags":[],"at":"2026-11-02T00:00:00Z","address":{"city":"x"},"count":1}`
+	if _, err := srv.Invoke(context.Background(), "public", "things.update", "user", json.RawMessage(body)); !isCode(err, define.CodeInvalidArgument) {
+		t.Errorf("two ids: got %v", err)
+	}
+	one := `{"id":["t1"],"tags":[],"at":"2026-11-02T00:00:00Z","address":{"city":"x"},"count":1}`
+	if _, err := srv.Invoke(context.Background(), "public", "things.update", "user", json.RawMessage(one)); err != nil {
+		t.Errorf("one id in a list: %v", err)
+	}
+}
+
+// トークンの無い呼び出しは、呼び出し元の ctx の主体を引き継がない。
+func TestInvokeAnonymousDropsCallerPrincipal(t *testing.T) {
+	var seen bool
+	op := define.Query[struct{}, string]("who.am_i", define.Anonymous(), define.Expose(define.Public, define.REST)).
+		Handle(func(ctx context.Context, _ struct{}) (string, error) {
+			_, seen = define.PrincipalFrom(ctx)
+			return "ok", nil
+		})
+	srv, err := runtime.Build(define.NewRegistry().Add(op), runtime.Config{Authenticator: memory.NewAuthenticator(), Authorizer: memory.NewAuthorizer()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := define.WithPrincipal(context.Background(), port.Principal{Type: port.PrincipalUser, ID: "usr_parent"})
+	if _, err := srv.Invoke(ctx, "public", "who.am_i", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if seen {
+		t.Error("anonymous call saw the caller's principal")
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 
 	"github.com/imohiyoko/API/define"
@@ -49,6 +50,9 @@ func (c *opCall) run(ctx context.Context, token string, hasToken bool, client st
 		ctx = define.WithPrincipal(ctx, p)
 	} else if !c.spec.Anonymous {
 		return nil, &define.Error{Code: define.CodeUnauthenticated}
+	} else {
+		// 呼び出し元の ctx の主体（Invoke を呼んだ操作の主体など）を引き継がない。
+		ctx = define.WithoutPrincipal(ctx)
 	}
 
 	// レートリミット（design.md 4.4）。認可の前に数え、超えた呼び出しで iam を呼ばない。
@@ -184,6 +188,13 @@ func newFieldsSource(c *opCall, req Request) *fieldsSource {
 	s := &fieldsSource{c: c, values: req.Fields, err: req.Err}
 	for name, v := range req.Fields {
 		i := slices.IndexFunc(c.spec.Input.Fields, func(f manifest.Field) bool { return f.Name == name })
+		if i >= 0 && c.spec.Input.Fields[i].In == "path" && s.err == nil {
+			// パスの引数は1つの値。配列なら、先頭だけを使わずに誤りにする（クエリなら decodeInput が「given more than once」で拒む）。
+			var arr []json.RawMessage
+			if json.Unmarshal(v, &arr) == nil && len(arr) != 1 {
+				s.err = fmt.Errorf("%s: must be a single value", name)
+			}
+		}
 		if i >= 0 && c.spec.Input.Fields[i].In != "body" {
 			continue
 		}
