@@ -7,6 +7,7 @@
 | M1 土台 | 1つの定義から、公開範囲ごとの REST の口と OpenAPI が作られ、iam でユーザーを認証・認可できる |
 | M2 gRPC とサービスアカウント | 同じ定義が gRPC でも出せ、internal・partner の呼び出し元を iam で確かめられる |
 | M3 サイドカー | Go 以外のサービスが、マニフェストとサイドカーで同じ API を出せる |
+| M3.5 組み込み | CLI などプロセス内から同じ操作を呼べ、使わないプロトコルの依存をビルドに含めない |
 | M4 GraphQL | 同じ定義が GraphQL でも出せ、フィールドごとの判定がまとめて行える |
 | M5 イベント | Stream・Event が WebSocket・Webhook・SSE で出せる |
 | M6 運用と拡張 | 契約の破壊的変更を CI で検出でき、必要なら SOAP を足す |
@@ -66,6 +67,22 @@
 - [x] YAML で書いたマニフェストと、同じ内容を Go で書いた定義の書き出しが一致するテストが通る（`examples/users/users_test.go`）
 - [x] Go 以外の本体を置いた E2E で、ライブラリと同じ認証・認可・フィールドの絞り込みの結果になる（Node.js の `examples/users-node`、`scripts/e2e-sidecar.sh`、CI）
 - [x] 本体に届く要求に、認証済みの主体が載り、絞り込み前のフィールドが本体から漏れないテストが通る（`sidecar/sidecar_test.go`）
+
+## M3.5 組み込み
+
+**ゴール**：CLI などプロセス内から同じ操作を呼べ、使わないプロトコルの依存をビルドに含めない（ADR 0007。herdrOrchestrator の ADR 0008 から）。
+
+- プロセス内の口 `Server.Invoke`（design.md 2.2）と、プロトコルの口が使う `Server.Serve`（#11）
+- gRPC の口を `runtime/grpcx`、YAML の読み込みを `manifest/yamlx` に分ける（#12）
+
+### 完了条件
+
+- [x] 同じ操作を REST と `Invoke` で呼ぶと、同じ入力・主体で同じ出力とエラーになるテストが通る（`runtime/invoke_test.go`。JSON と Go の値の両方）
+- [x] `Expose` の無い公開範囲への `Invoke` が拒まれるテストが通る
+- [x] `min=partner` のフィールドが public の `Invoke` の出力に出ないテストが通る
+- [x] REST だけを使う例（`examples/users/cmd/users-rest`）の `go list -deps` に grpc・protobuf・yaml が出ない（`internal/archtest`）
+- [x] `define`・`manifest`・`runtime`・`port` が grpc・protobuf・yaml を import しないことを archtest で検査する
+- [x] 既存の gRPC・サイドカー・E2E が今と同じに通る
 
 ## M4 GraphQL
 

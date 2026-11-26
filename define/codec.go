@@ -16,7 +16,7 @@ type InputSource interface {
 	PathValue(name string) string
 	// QueryValues はクエリの値。
 	QueryValues(name string) ([]string, bool)
-	// Body は本文の JSON のオブジェクト。本文が無ければ nil。
+	// Body は本文の JSON のオブジェクト。本文が無ければ nil。誤りは invalid_argument になる（*Error ならそのまま、それ以外は「body: 」を付ける）。
 	Body() (map[string]json.RawMessage, error)
 	// Visible は、min を付けたフィールドがこの公開範囲に見えるか。見えないフィールドは無いものとして扱う。
 	Visible(min string) bool
@@ -29,6 +29,10 @@ func invalid(format string, args ...any) *Error {
 func decodeInput(v reflect.Value, p *structPlan, s manifest.Schema, src InputSource) error {
 	body, err := src.Body()
 	if err != nil {
+		// 入力の口が *Error を返したら、そのまま使う（本文以外の誤りを「body:」と見せないため）。
+		if e, ok := err.(*Error); ok {
+			return e
+		}
 		return invalid("body: %v", err)
 	}
 	known := map[string]bool{}

@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/imohiyoko/API/adapters/memory"
-	"github.com/imohiyoko/API/manifest"
+	"github.com/imohiyoko/API/manifest/yamlx"
 	"github.com/imohiyoko/API/port"
 	"github.com/imohiyoko/API/runtime"
 	"github.com/imohiyoko/API/sidecar"
@@ -66,7 +66,7 @@ func server(t *testing.T, upstreamURL string) *runtime.Server {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	m, err := manifest.ReadYAML(f)
+	m, err := yamlx.Read(f)
 	if err != nil {
 		t.Fatal(err)
 	}

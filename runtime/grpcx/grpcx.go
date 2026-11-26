@@ -1,4 +1,6 @@
-package runtime
+// Package grpcx は、runtime.Server の gRPC の口（design.md 5.2）。
+// gRPC を使う利用者だけがこのパッケージを import し、grpc-go・protobuf をビルドに含める（design.md 2.3）。
+package grpcx
 
 import (
 	"context"
@@ -29,70 +31,65 @@ import (
 	"github.com/imohiyoko/API/define"
 	"github.com/imohiyoko/API/gen/proto"
 	"github.com/imohiyoko/API/manifest"
+	"github.com/imohiyoko/API/runtime"
 )
 
 // ErrorDomain は gRPC のエラーの ErrorInfo の domain。
 const ErrorDomain = "github.com/imohiyoko/API"
 
-// grpcAudience は、公開範囲の gRPC の口の材料（Build で作る）。
-type grpcAudience struct {
-	file  protoreflect.FileDescriptor
-	calls map[string]*opCall // 操作の名前 → 呼び出し
-}
-
-// GRPCServer は公開範囲の gRPC の口を作る。生成コードを使わず、マニフェストから作った記述子でメッセージを組み立てる（design.md 5.2）。
+// Server は公開範囲の gRPC の口を作る。生成コードを使わず、マニフェストから作った記述子でメッセージを組み立てる（design.md 5.2）。
 // 生成した .proto（cli の gen）と同じ記述子なので、そのまま呼べる。gRPC で出す操作が無い公開範囲ならエラー。
 // AudienceConfig.GRPCReflection なら、サーバーリフレクション（grpcurl など）も載せる。
-func (s *Server) GRPCServer(audience string, opts ...grpc.ServerOption) (*grpc.Server, error) {
-	ga, ok := s.grpc[audience]
-	if !ok {
-		return nil, fmt.Errorf("runtime: %s exposes nothing over gRPC", audience)
+// 呼び出しは srv.Serve を通るので、認証・認可・入力の検証・出力の絞り込みは REST と同じになる。
+func Server(srv *runtime.Server, audience string, opts ...grpc.ServerOption) (*grpc.Server, error) {
+	m := srv.Manifest()
+	ac, ok := srv.AudienceConfig(audience)
+	if !ok || !proto.Exposes(m, audience) {
+		return nil, fmt.Errorf("grpcx: %s exposes nothing over gRPC", audience)
 	}
-	srv := grpc.NewServer(append([]grpc.ServerOption{grpc.MaxRecvMsgSize(maxBody)}, opts...)...)
-	svcs := ga.file.Services()
-	for i := 0; i < svcs.Len(); i++ {
-		sd := svcs.Get(i)
-		desc := grpc.ServiceDesc{ServiceName: string(sd.FullName()), HandlerType: (*any)(nil), Metadata: ga.file.Path()}
-		for j := 0; j < sd.Methods().Len(); j++ {
-			md := sd.Methods().Get(j)
-			c := ga.calls[string(sd.FullName())+"/"+string(md.Name())]
-			desc.Methods = append(desc.Methods, grpc.MethodDesc{MethodName: string(md.Name()), Handler: (&grpcOp{opCall: c, method: md}).handle})
-		}
-		srv.RegisterService(&desc, struct{}{})
-	}
-	if s.audiences[audience].GRPCReflection {
-		var files protoregistry.Files
-		_ = files.RegisterFile(timestamppb.File_google_protobuf_timestamp_proto)
-		if err := files.RegisterFile(ga.file); err != nil {
-			return nil, err
-		}
-		ro := reflection.ServerOptions{Services: srv, DescriptorResolver: &files, ExtensionResolver: protoregistry.GlobalTypes}
-		reflectionv1.RegisterServerReflectionServer(srv, reflection.NewServerV1(ro))
-		reflectionv1alpha.RegisterServerReflectionServer(srv, reflection.NewServer(ro))
-	}
-	return srv, nil
-}
-
-func buildGRPC(m *manifest.Manifest, aud string, newCall func(*manifest.Operation) *opCall) (*grpcAudience, error) {
-	file, err := proto.File(m, aud)
+	file, err := proto.File(m, audience)
 	if err != nil {
-		return nil, fmt.Errorf("runtime: gRPC for %s: %w", aud, err)
+		return nil, fmt.Errorf("grpcx: gRPC for %s: %w", audience, err)
 	}
-	ga := &grpcAudience{file: file, calls: map[string]*opCall{}}
-	pkg := proto.PackageName(m, aud)
+	ops := map[string]*manifest.Operation{} // サービス/メソッド → 操作
+	pkg := proto.PackageName(m, audience)
 	for i := range m.Operations {
 		spec := &m.Operations[i]
-		if !spec.Exposed(aud, manifest.GRPC) || !manifest.GRPCServes(spec.Kind) {
+		if !spec.Exposed(audience, manifest.GRPC) || !manifest.GRPCServes(spec.Kind) {
 			continue
 		}
 		n := spec.ResolveGRPC()
-		ga.calls[pkg+"."+n.Service+"/"+n.Method] = newCall(spec)
+		ops[pkg+"."+n.Service+"/"+n.Method] = spec
 	}
-	return ga, nil
+	gs := grpc.NewServer(append([]grpc.ServerOption{grpc.MaxRecvMsgSize(runtime.MaxBody)}, opts...)...)
+	svcs := file.Services()
+	for i := 0; i < svcs.Len(); i++ {
+		sd := svcs.Get(i)
+		desc := grpc.ServiceDesc{ServiceName: string(sd.FullName()), HandlerType: (*any)(nil), Metadata: file.Path()}
+		for j := 0; j < sd.Methods().Len(); j++ {
+			md := sd.Methods().Get(j)
+			op := &grpcOp{srv: srv, aud: audience, spec: ops[string(sd.FullName())+"/"+string(md.Name())], method: md}
+			desc.Methods = append(desc.Methods, grpc.MethodDesc{MethodName: string(md.Name()), Handler: op.handle})
+		}
+		gs.RegisterService(&desc, struct{}{})
+	}
+	if ac.GRPCReflection {
+		var files protoregistry.Files
+		_ = files.RegisterFile(timestamppb.File_google_protobuf_timestamp_proto)
+		if err := files.RegisterFile(file); err != nil {
+			return nil, err
+		}
+		ro := reflection.ServerOptions{Services: gs, DescriptorResolver: &files, ExtensionResolver: protoregistry.GlobalTypes}
+		reflectionv1.RegisterServerReflectionServer(gs, reflection.NewServerV1(ro))
+		reflectionv1alpha.RegisterServerReflectionServer(gs, reflection.NewServer(ro))
+	}
+	return gs, nil
 }
 
 type grpcOp struct {
-	*opCall
+	srv    *runtime.Server
+	aud    string
+	spec   *manifest.Operation
 	method protoreflect.MethodDescriptor
 }
 
@@ -108,35 +105,30 @@ func (g *grpcOp) handle(srv any, ctx context.Context, dec func(any) error, inter
 	return interceptor(ctx, req, info, func(ctx context.Context, r any) (any, error) { return g.serve(ctx, r.(*dynamicpb.Message)) })
 }
 
-func (g *grpcOp) serve(ctx context.Context, req *dynamicpb.Message) (res any, err error) {
-	defer func() {
-		if v := recover(); v != nil {
-			g.cfg.Logger.Error("api handler panic", "operation", g.spec.Name, "panic", v)
-			res, err = nil, g.status(define.Errorf(define.CodeInternal, "handler panicked"))
-		}
-	}()
-	token, hasToken := "", false
+func (g *grpcOp) serve(ctx context.Context, req *dynamicpb.Message) (any, error) {
+	r := runtime.Request{}
 	if md, ok := metadata.FromIncomingContext(ctx); ok {
 		if v := md.Get("authorization"); len(v) > 0 {
-			token, hasToken = bearer(v[0])
+			r.Token, r.HasToken = runtime.Bearer(v[0])
 		}
 	}
-	// 変換の誤りは Body() で返す。REST と同じく、認証と主体の確認のあとで invalid_argument になる。
-	src := newGRPCSource(req, g.spec, g.m, g.aud)
-	client := ""
 	if p, ok := peer.FromContext(ctx); ok && p.Addr != nil {
-		client = clientHost(p.Addr.String())
+		r.Client = runtime.ClientHost(p.Addr.String())
 	}
-	out, err := g.run(ctx, token, hasToken, client, src)
-	if err != nil {
-		return nil, g.status(err)
+	// gRPC にはパスやクエリが無いので、すべてのフィールドがメッセージに入る。REST での場所への振り分けは Serve が行う。
+	// 変換の誤りは、REST と同じく認証と主体の確認のあとで invalid_argument になる。
+	r.Fields, r.Err = messageJSON(req)
+	out, e := g.srv.Serve(ctx, g.aud, g.spec.Name, r)
+	if e != nil {
+		return nil, statusOf(e)
 	}
 	reply := dynamicpb.NewMessage(g.method.Output())
 	if g.spec.Output.Type != "object" {
 		out = map[string]any{proto.ValueField: out}
 	}
 	if err := fillMessage(reply, out); err != nil {
-		return nil, g.status(err)
+		g.srv.Logger().Error("api handler error", "operation", g.spec.Name, "error", err)
+		return nil, statusOf(&define.Error{Code: define.CodeInternal})
 	}
 	return reply, nil
 }
@@ -154,11 +146,10 @@ var grpcCodes = map[define.Code]codes.Code{
 	define.CodeInternal:           codes.Internal,
 }
 
-// status はエラーを gRPC の status にする。見せる中身は REST と同じ（Disclosure）。
+// statusOf は、Serve が返したエラー（公開範囲の Disclosure に従って絞り込み済み）を gRPC の status にする。
 // コードは ErrorInfo の reason、理由は metadata の reasons（カンマ区切り）に入れる。
-func (g *grpcOp) status(err error) error {
-	e := g.failure(err)
-	msg, reasons := g.disclose(e)
+func statusOf(e *define.Error) error {
+	msg := e.Message
 	if msg == "" {
 		msg = string(e.Code)
 	}
@@ -167,8 +158,8 @@ func (g *grpcOp) status(err error) error {
 		code = codes.Unknown
 	}
 	info := &errdetails.ErrorInfo{Reason: string(e.Code), Domain: ErrorDomain}
-	if len(reasons) > 0 {
-		info.Metadata = map[string]string{"reasons": strings.Join(reasons, ",")}
+	if len(e.Reasons) > 0 {
+		info.Metadata = map[string]string{"reasons": strings.Join(e.Reasons, ",")}
 	}
 	details := []protoadapt.MessageV1{info}
 	if e.RetryAfter > 0 {
@@ -179,70 +170,6 @@ func (g *grpcOp) status(err error) error {
 		return status.New(code, msg).Err()
 	}
 	return st.Err()
-}
-
-// grpcSource は gRPC の要求のメッセージを define.InputSource にする。
-// gRPC にはパスやクエリが無いので、すべてのフィールドがメッセージに入り、REST での場所ごとに振り分ける。
-type grpcSource struct {
-	m      *manifest.Manifest
-	aud    string
-	values map[string]json.RawMessage
-	body   map[string]json.RawMessage
-	err    error
-}
-
-func newGRPCSource(req protoreflect.Message, spec *manifest.Operation, m *manifest.Manifest, aud string) *grpcSource {
-	all, err := messageJSON(req)
-	if err != nil {
-		return &grpcSource{m: m, aud: aud, err: err}
-	}
-	s := &grpcSource{m: m, aud: aud, values: all}
-	for _, f := range spec.Input.Fields {
-		if v, ok := all[f.Name]; ok && f.In == "body" {
-			if s.body == nil {
-				s.body = map[string]json.RawMessage{}
-			}
-			s.body[f.Name] = v
-		}
-	}
-	return s
-}
-
-func (s *grpcSource) PathValue(name string) string {
-	v, _ := s.QueryValues(name)
-	if len(v) == 0 {
-		return ""
-	}
-	return v[0]
-}
-
-func (s *grpcSource) QueryValues(name string) ([]string, bool) {
-	raw, ok := s.values[name]
-	if !ok {
-		return nil, false
-	}
-	var arr []json.RawMessage
-	if json.Unmarshal(raw, &arr) == nil {
-		out := make([]string, len(arr))
-		for i, r := range arr {
-			out[i] = rawString(r)
-		}
-		return out, true
-	}
-	return []string{rawString(raw)}, true
-}
-
-// Body は body のフィールド。define の Decode は最初にこれを呼ぶので、メッセージの変換の誤りもここで返す。
-func (s *grpcSource) Body() (map[string]json.RawMessage, error) { return s.body, s.err }
-
-func (s *grpcSource) Visible(min string) bool { return s.m.Visible(min, s.aud) }
-
-func rawString(r json.RawMessage) string {
-	var s string
-	if json.Unmarshal(r, &s) == nil {
-		return s
-	}
-	return string(r)
 }
 
 // messageJSON はメッセージを、フィールドの名前 → JSON の値にする。値の形は REST の JSON と同じ

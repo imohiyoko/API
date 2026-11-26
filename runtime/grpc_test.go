@@ -25,6 +25,7 @@ import (
 	"github.com/imohiyoko/API/gen/proto"
 	"github.com/imohiyoko/API/port"
 	"github.com/imohiyoko/API/runtime"
+	"github.com/imohiyoko/API/runtime/grpcx"
 )
 
 type address struct {
@@ -94,7 +95,7 @@ type grpcClient struct {
 
 func dialGRPC(t *testing.T, srv *runtime.Server, aud string) *grpcClient {
 	t.Helper()
-	gs, err := srv.GRPCServer(aud)
+	gs, err := grpcx.Server(srv, aud)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +281,7 @@ func TestGRPCInputErrorsComeAfterAuthentication(t *testing.T) {
 
 func TestGRPCServerOnlyForExposedAudiences(t *testing.T) {
 	srv := parityServer(t)
-	if _, err := srv.GRPCServer("partner"); err == nil {
+	if _, err := grpcx.Server(srv, "partner"); err == nil {
 		t.Fatal("partner exposes nothing over gRPC")
 	}
 }

@@ -9,7 +9,6 @@ import (
 	"net/http"
 
 	"github.com/imohiyoko/API/define"
-	"github.com/imohiyoko/API/gen/proto"
 	"github.com/imohiyoko/API/manifest"
 	"github.com/imohiyoko/API/port"
 )
@@ -36,7 +35,7 @@ type AudienceConfig struct {
 	// 空でなければ、Principal.Audiences にこれを含むトークンだけを受ける（ほかの API や口に向けたトークンを拒む）。
 	Resource   string
 	Disclosure Disclosure
-	// GRPCReflection は、gRPC の口にサーバーリフレクションを載せるか（internal の既定）。
+	// GRPCReflection は、gRPC の口（runtime/grpcx）にサーバーリフレクションを載せるか（internal の既定）。
 	// 載せると、契約（.proto）を持たない呼び出し元にも、その公開範囲の操作と型が見える。
 	GRPCReflection bool
 }
@@ -66,12 +65,15 @@ type Config struct {
 }
 
 // Server は公開範囲ごとの口を持つ。
+// REST の口（Handler）とプロセス内の口（Invoke）はこのパッケージに、gRPC の口は runtime/grpcx にある。
+// gRPC を使わない利用者のビルドに grpc・protobuf が入らないよう分けている（design.md 2.3）。
 type Server struct {
 	manifest  *manifest.Manifest
 	warnings  []manifest.Diagnostic
 	handlers  map[string]http.Handler
-	grpc      map[string]*grpcAudience
+	calls     map[string]map[string]*opCall // 公開範囲 → 操作の名前 → 呼び出し（その公開範囲に出す操作だけ）
 	audiences map[string]AudienceConfig
+	logger    *slog.Logger
 }
 
 // Build は定義を検査し（design.md 4.3）、公開範囲ごとの口を組み立てる。エラーがあれば起動を拒む。
@@ -93,7 +95,7 @@ func Build(reg *define.Registry, cfg Config) (*Server, error) {
 	if cfg.RateLimiter == nil {
 		cfg.RateLimiter = NewMemoryRateLimiter(nil)
 	}
-	s := &Server{manifest: m, handlers: map[string]http.Handler{}, grpc: map[string]*grpcAudience{}, audiences: map[string]AudienceConfig{}}
+	s := &Server{manifest: m, handlers: map[string]http.Handler{}, calls: map[string]map[string]*opCall{}, audiences: map[string]AudienceConfig{}, logger: cfg.Logger}
 	for _, d := range ds {
 		s.warnings = append(s.warnings, d)
 		cfg.Logger.Warn("api definition", "diagnostic", d.String())
@@ -112,16 +114,15 @@ func Build(reg *define.Registry, cfg Config) (*Server, error) {
 			ac.Principals = DefaultAudienceConfig(aud).Principals
 		}
 		s.audiences[aud] = ac
-		s.handlers[aud] = newRESTHandler(m, aud, ac, ops, cfg)
-		if proto.Exposes(m, aud) {
-			ga, err := buildGRPC(m, aud, func(spec *manifest.Operation) *opCall {
-				return &opCall{m: m, aud: aud, ac: ac, spec: spec, op: ops[spec.Name], cfg: cfg}
-			})
-			if err != nil {
-				return nil, err
+		calls := map[string]*opCall{}
+		for i := range m.Operations {
+			spec := &m.Operations[i]
+			if spec.ExposedTo(aud) {
+				calls[spec.Name] = &opCall{m: m, aud: aud, ac: ac, spec: spec, op: ops[spec.Name], cfg: cfg}
 			}
-			s.grpc[aud] = ga
 		}
+		s.calls[aud] = calls
+		s.handlers[aud] = newRESTHandler(m, aud, calls)
 	}
 	return s, nil
 }
@@ -134,6 +135,15 @@ func (s *Server) Handler(audience string) http.Handler {
 	}
 	return http.NotFoundHandler()
 }
+
+// AudienceConfig は公開範囲の設定（上書きと既定を合わせたもの）。知らない公開範囲なら false。
+func (s *Server) AudienceConfig(audience string) (AudienceConfig, bool) {
+	ac, ok := s.audiences[audience]
+	return ac, ok
+}
+
+// Logger は Config.Logger（無ければ slog.Default()）。
+func (s *Server) Logger() *slog.Logger { return s.logger }
 
 // Manifest は組み立てに使ったマニフェスト。
 func (s *Server) Manifest() *manifest.Manifest { return s.manifest }

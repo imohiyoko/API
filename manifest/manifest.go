@@ -166,6 +166,16 @@ func (o *Operation) Exposed(audience, protocol string) bool {
 	return false
 }
 
+// ExposedTo は操作が audience にいずれかのプロトコルで出るか（プロセス内の口 runtime.Server.Invoke はこれで決める）。
+func (o *Operation) ExposedTo(audience string) bool {
+	for _, e := range o.Expose {
+		if e.Audience == audience && len(e.Protocols) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // Operation は名前で操作を探す。
 func (m *Manifest) Operation(name string) (*Operation, bool) {
 	for i := range m.Operations {

@@ -22,6 +22,7 @@ import (
 	"github.com/imohiyoko/API/cli"
 	"github.com/imohiyoko/API/examples/users"
 	"github.com/imohiyoko/API/runtime"
+	"github.com/imohiyoko/API/runtime/grpcx"
 )
 
 func main() {
@@ -76,7 +77,7 @@ func main() {
 	// gRPC の口（design.md 5.2）。gRPC で出す操作がある公開範囲だけ。internal はリフレクションも載る。
 	grpcAddrs := map[string]string{"internal": "127.0.0.1:9090", "partner": ":9091", "public": ":9092"}
 	for aud, addr := range grpcAddrs {
-		gs, err := srv.GRPCServer(aud)
+		gs, err := grpcx.Server(srv, aud)
 		if err != nil {
 			continue
 		}
